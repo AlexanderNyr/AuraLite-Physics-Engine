@@ -42,6 +42,17 @@ name = "auralite-math"
 version = "0.1.0"
 
 [[package]]
+name = "auralite-particles"
+version = "0.1.0"
+dependencies = [
+ "auralite-collision",
+ "auralite-core",
+ "auralite-dynamics",
+ "auralite-geometry",
+ "auralite-math",
+]
+
+[[package]]
 name = "auralite-sandbox"
 version = "0.1.0"
 dependencies = [
