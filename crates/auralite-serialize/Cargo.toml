@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 [dependencies]
+auralite-core = { path = "../auralite-core" }
+auralite-math = { path = "../auralite-math" }
+auralite-geometry = { path = "../auralite-geometry" }
+auralite-collision = { path = "../auralite-collision" }
 auralite-dynamics = { path = "../auralite-dynamics" }
 [lints]
 workspace = true

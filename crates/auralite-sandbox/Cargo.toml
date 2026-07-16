@@ -5,7 +5,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 [dependencies]
-auralite-dynamics = { path = "../auralite-dynamics" }
+auralite-core = { path = "../auralite-core" }
 auralite-math = { path = "../auralite-math" }
+auralite-collision = { path = "../auralite-collision" }
+auralite-geometry = { path = "../auralite-geometry" }
+auralite-dynamics = { path = "../auralite-dynamics" }
+auralite-softbody = { path = "../auralite-softbody" }
+auralite-particles = { path = "../auralite-particles" }
+auralite-vehicles = { path = "../auralite-vehicles" }
+auralite-serialize = { path = "../auralite-serialize" }
 [lints]
 workspace = true

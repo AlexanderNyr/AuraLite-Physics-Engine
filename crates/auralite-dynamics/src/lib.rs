@@ -1004,6 +1004,66 @@ impl World2 {
         self.bodies.len()
     }
 
+    /// Current step count.
+    pub fn step_count(&self) -> u64 {
+        self.step
+    }
+
+    /// Current gravity.
+    pub fn gravity(&self) -> Vec2 {
+        self.gravity
+    }
+
+    /// Get all body handles for safe iteration.
+    pub fn body_handles(&self) -> Vec<BodyHandle2> {
+        self.bodies.iter().map(|(h, _)| h).collect()
+    }
+
+    /// Serialize all bodies to a byte vector.
+    pub fn serialize_bodies(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for (_, b) in self.bodies.iter() {
+            // Simplified serialization - encode body state
+            buf.extend_from_slice(&b.id.0.to_le_bytes());
+            buf.push(b.kind as u8);
+            buf.extend_from_slice(&b.position.x.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.position.y.to_bits().to_le_bytes());
+            buf.extend_from_slice(&rot2_angle(b.rotation).to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.velocity.x.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.velocity.y.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.angular_velocity.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.inv_mass.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.inv_inertia.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.restitution.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.friction.to_bits().to_le_bytes());
+            buf.push(u8::from(b.sleeping));
+        }
+        buf
+    }
+
+    /// Serialize all joints to a byte vector.
+    pub fn serialize_joints(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_u32(&mut buf, self.joints.len() as u32);
+        for j in &self.joints {
+            let disc = match j.config.joint_type {
+                joints::JointType2::Weld => 0u8,
+                joints::JointType2::Distance => 1u8,
+                joints::JointType2::Spring { .. } => 2u8,
+                joints::JointType2::Revolute => 3u8,
+                joints::JointType2::Prismatic { .. } => 4u8,
+            };
+            buf.push(disc);
+            write_vec2_into(&mut buf, j.config.anchor_a);
+            write_vec2_into(&mut buf, j.config.anchor_b);
+            buf.extend_from_slice(&j.config.break_impulse.to_bits().to_le_bytes());
+            buf.push(u8::from(j.broken));
+            buf.extend_from_slice(&j.impulse.to_bits().to_le_bytes());
+            buf.extend_from_slice(&j.accumulated_position_error.to_bits().to_le_bytes());
+        }
+        buf
+    }
+
     /// Add a joint between two bodies.
     pub fn add_joint(&mut self, config: JointConfig2) -> Result<JointId, WorldError> {
         if self.bodies.get(config.body_a).is_none() || self.bodies.get(config.body_b).is_none() {
@@ -1401,6 +1461,14 @@ fn rot2_angle(r: Rot2) -> Real {
     v.y.atan2(v.x)
 }
 
+fn write_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+fn write_vec2_into(buf: &mut Vec<u8>, v: Vec2) {
+    buf.extend_from_slice(&v.x.to_bits().to_le_bytes());
+    buf.extend_from_slice(&v.y.to_bits().to_le_bytes());
+}
+
 /// Generic 2D convex contact using GJK + EPA.
 fn generic_convex_contact_2d(
     ca: &Collider2,
@@ -1542,6 +1610,44 @@ impl World3 {
     }
     pub fn body_count(&self) -> usize {
         self.bodies.len()
+    }
+
+    /// Current step count.
+    pub fn step_count(&self) -> u64 {
+        self.step
+    }
+
+    /// Current gravity.
+    pub fn gravity(&self) -> Vec3 {
+        self.gravity
+    }
+
+    /// Get all body handles for safe iteration.
+    pub fn body_handles(&self) -> Vec<BodyHandle3> {
+        self.bodies.iter().map(|(h, _)| h).collect()
+    }
+
+    /// Serialize bodies to bytes.
+    pub fn serialize_bodies(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for (_, b) in self.bodies.iter() {
+            buf.extend_from_slice(&b.id.0.to_le_bytes());
+            buf.push(b.kind as u8);
+            buf.extend_from_slice(&b.position.x.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.position.y.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.position.z.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.velocity.x.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.velocity.y.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.velocity.z.to_bits().to_le_bytes());
+            buf.extend_from_slice(&b.restitution.to_bits().to_le_bytes());
+            buf.push(u8::from(b.sleeping));
+        }
+        buf
+    }
+
+    /// Serialize joints (empty for now).
+    pub fn serialize_joints(&self) -> Vec<u8> {
+        Vec::new()
     }
 
     /// Step with gravity + ground contact (extended vertical slice).

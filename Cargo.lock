@@ -66,15 +66,26 @@ dependencies = [
 name = "auralite-sandbox"
 version = "0.1.0"
 dependencies = [
+ "auralite-collision",
+ "auralite-core",
  "auralite-dynamics",
+ "auralite-geometry",
  "auralite-math",
+ "auralite-particles",
+ "auralite-serialize",
+ "auralite-softbody",
+ "auralite-vehicles",
 ]
 
 [[package]]
 name = "auralite-serialize"
 version = "0.1.0"
 dependencies = [
+ "auralite-collision",
+ "auralite-core",
  "auralite-dynamics",
+ "auralite-geometry",
+ "auralite-math",
 ]
 
 [[package]]

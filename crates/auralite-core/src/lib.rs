@@ -13,6 +13,15 @@ pub struct Handle<T> {
     marker: core::marker::PhantomData<fn() -> T>,
 }
 impl<T> Copy for Handle<T> {}
+impl<T> Default for Handle<T> {
+    fn default() -> Self {
+        Self {
+            index: u32::MAX,
+            generation: 0,
+            marker: core::marker::PhantomData,
+        }
+    }
+}
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         *self
