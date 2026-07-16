@@ -19,6 +19,7 @@ version = "0.1.0"
 dependencies = [
  "auralite-collision",
  "auralite-core",
+ "auralite-geometry",
  "auralite-math",
 ]
 

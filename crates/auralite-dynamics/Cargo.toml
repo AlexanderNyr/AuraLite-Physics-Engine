@@ -11,9 +11,13 @@ single-thread = []
 [dependencies]
 auralite-math = { path = "../auralite-math" }
 auralite-core = { path = "../auralite-core" }
+auralite-geometry = { path = "../auralite-geometry" }
 auralite-collision = { path = "../auralite-collision" }
 [lints]
 workspace = true
 [[example]]
 name = "falling"
 path = "examples/falling.rs"
+[[example]]
+name = "stacking2d"
+path = "examples/stacking2d.rs"
