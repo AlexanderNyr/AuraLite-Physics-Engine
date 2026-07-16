@@ -1,5 +1,5 @@
 # ADR 06: narrow-phase convex algorithms
-**Status:** accepted; validated at M3.
+**Status:** accepted.
 
 ## Context
 The narrow phase must produce contact normals, depths, and witness points for all convex-convex shape pairs. Determinism, bounded iteration, and degeneration handling are required.

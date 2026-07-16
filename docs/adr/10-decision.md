@@ -1,5 +1,5 @@
 # ADR 10: particle and fluid method
-**Status:** accepted; revisit during M7.
+**Status:** accepted.
 
 ## Context
 Physical particles and incompressible fluids require a simulation method compatible with the engine's deterministic design.

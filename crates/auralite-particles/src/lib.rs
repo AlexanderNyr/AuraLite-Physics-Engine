@@ -250,17 +250,26 @@ impl PbfFluid {
         }
     }
 
-    /// Build neighbor list via brute-force O(n²).
+    /// Build neighbor list via spatial hash.
     pub fn build_neighbors(&self, storage: &ParticleStorage, indices: &[usize]) -> NeighborList {
-        let h2 = self.kernel_h * self.kernel_h;
+        let h = self.kernel_h;
+        let mut hash = auralite_core::SpatialHash::new(h);
+        for &i in indices {
+            hash.insert(storage.positions[i], i);
+        }
+        
         let mut neighbors = Vec::with_capacity(indices.len());
+        let h2 = h * h;
         for &i in indices {
             let pi = storage.positions[i];
+            let candidates = hash.query(pi, h);
             let mut row = Vec::new();
-            for (j, &j2) in indices.iter().enumerate() {
-                let pj = storage.positions[j2];
-                if (pi - pj).length_squared() < h2 && i != j2 {
-                    row.push(j);
+            for &j in &candidates {
+                if i != j && (pi - storage.positions[j]).length_squared() < h2 {
+                    // Find index of j in indices slice
+                    if let Some(pos) = indices.iter().position(|&x| x == j) {
+                        row.push(pos);
+                    }
                 }
             }
             neighbors.push(row);
@@ -379,117 +388,65 @@ impl PbfFluid {
         let h = self.kernel_h;
         let rd = self.rest_density;
         let stiffness = self.stiffness;
-        let visc = self.viscosity * dt;
 
         // Predict positions
         self.predicted_positions.clear();
-        let mut temp_velocities: Vec<Vec3> = Vec::with_capacity(indices.len());
         for &i in indices {
             let vel = storage.velocities[i] + gravity * dt;
             storage.velocities[i] = vel;
-            self.predicted_positions
-                .push(storage.positions[i] + vel * dt);
-            temp_velocities.push(vel);
+            self.predicted_positions.push(storage.positions[i] + vel * dt);
         }
 
         // Build neighbors from predicted positions
-        let mut temp_pos = vec![Vec3::ZERO; indices.len()];
-        for (row, _i) in indices.iter().enumerate() {
-            temp_pos[row] = self.predicted_positions[row];
+        let mut temp_storage = storage.clone();
+        for (row, &i) in indices.iter().enumerate() {
+            temp_storage.positions[i] = self.predicted_positions[row];
         }
-        let mut neighbors: Vec<Vec<usize>> = Vec::with_capacity(indices.len());
-        let h2 = h * h;
-        for row in 0..indices.len() {
-            let pi = temp_pos[row];
-            let mut row_neighbors = Vec::new();
-            for (j, &j2) in indices.iter().enumerate() {
-                if row == j {
-                    continue;
-                }
-                let pj = temp_pos[j2];
-                if (pi - pj).length_squared() < h2 {
-                    row_neighbors.push(j);
-                }
-            }
-            neighbors.push(row_neighbors);
-        }
+        let neighbors = self.build_neighbors(&temp_storage, indices);
 
-        let mut densities: Vec<Real> = vec![0.0; indices.len()];
-        let mut lambdas: Vec<Real> = vec![0.0; indices.len()];
-        let eps: Real = 1.0e-6;
-        let constraint_eps: Real = 0.01;
+        let _eps: Real = 1.0e-6;
+        let _constraint_eps: Real = 0.01;
 
         // Solve incompressibility (multiple iterations)
         for _iter in 0..5 {
             // Compute densities
-            for row in 0..indices.len() {
-                let pi = temp_pos[row];
-                let mut d = w_poly6(Vec3::ZERO, h);
-                for &nj in &neighbors[row] {
-                    d += w_poly6(pi - temp_pos[nj], h);
-                }
-                densities[row] = rd * d;
-            }
+            self.compute_densities(&temp_storage, indices, &neighbors);
             // Compute lambdas
-            for row in 0..indices.len() {
-                let ci = (densities[row] / rd).max(0.0) - 1.0;
-                if ci <= 0.0 {
-                    lambdas[row] = 0.0;
-                    continue;
-                }
-                let pi = temp_pos[row];
-                let mut sum_grad_sq = 0.0;
-                for &nj in &neighbors[row] {
-                    let grad = grad_w_spiky(pi - temp_pos[nj], h);
-                    sum_grad_sq += grad.length_squared();
-                }
-                let denom = sum_grad_sq + eps;
-                lambdas[row] = -ci / (denom + constraint_eps);
-            }
-            // Apply position corrections to temp_pos
-            for row in 0..indices.len() {
-                let lambda_i = lambdas[row];
+            self.compute_lambdas(indices, &neighbors);
+            // Apply position corrections to temp_storage
+            for (row, &i) in indices.iter().enumerate() {
+                let lambda_i = self.lambdas[row];
                 if lambda_i.abs() <= ABS_EPSILON {
                     continue;
                 }
-                let pi = temp_pos[row];
+                let pi = self.predicted_positions[row];
                 let mut delta = Vec3::ZERO;
-                for &nj in &neighbors[row] {
-                    let lambda_j = lambdas[nj];
-                    let pj = temp_pos[nj];
+                for &nj in &neighbors.neighbors[row] {
+                    let lambda_j = self.lambdas[nj];
+                    let pj = self.predicted_positions[nj];
                     let grad = grad_w_spiky(pi - pj, h);
-                    let scorr = stiffness * (lambda_i + lambda_j).max(0.0);
+                    let scorr = stiffness * (lambda_i + lambda_j).powi(4); // better scorr
                     delta += grad * (lambda_i + lambda_j + scorr);
                 }
                 if delta.is_finite() {
-                    temp_pos[row] += delta / rd;
+                    temp_storage.positions[i] += delta / rd;
                 }
+            }
+            // Update predicted positions for next iteration
+            for (row, &i) in indices.iter().enumerate() {
+                self.predicted_positions[row] = temp_storage.positions[i];
             }
         }
 
-        // Update positions and velocities from predicted
+        // Update positions and velocities
         for (row, &i) in indices.iter().enumerate() {
-            let new_pos = temp_pos[row];
+            let new_pos = self.predicted_positions[row];
             storage.velocities[i] = (new_pos - storage.positions[i]) / dt.max(ABS_EPSILON);
             storage.positions[i] = new_pos;
         }
 
         // Apply viscosity (XSPH)
-        if visc > ABS_EPSILON {
-            let mut vel_corrections: Vec<Vec3> = vec![Vec3::ZERO; indices.len()];
-            for row in 0..indices.len() {
-                let vi = storage.velocities[indices[row]];
-                for &nj in &neighbors[row] {
-                    let j = indices[nj];
-                    let vj = storage.velocities[j];
-                    let w = w_poly6(storage.positions[indices[row]] - storage.positions[j], h);
-                    vel_corrections[row] += (vj - vi) * w;
-                }
-            }
-            for (row, &i) in indices.iter().enumerate() {
-                storage.velocities[i] += vel_corrections[row] * visc;
-            }
-        }
+        self.apply_viscosity(storage, indices, &neighbors, dt);
     }
 }
 
@@ -522,6 +479,42 @@ pub fn is_submerged(point: Vec3, fluid_positions: &[Vec3], max_dist: Real) -> bo
     fluid_positions
         .iter()
         .any(|fp| (*fp - point).length_squared() <= d2)
+}
+
+/// Apply buoyancy forces to all dynamic bodies in the world based on fluid particles.
+pub fn apply_buoyancy_to_world(
+    world: &mut auralite_dynamics::World3,
+    storage: &ParticleStorage,
+    fluid_density: Real,
+    gravity: Vec3,
+) {
+    let fluid_indices = storage.alive_indices();
+    let fluid_positions: Vec<Vec3> = fluid_indices.iter().map(|&i| storage.positions[i]).collect();
+    
+    // We need to iterate over all bodies in the world.
+    // World3 has body_handles().
+    let handles = world.body_handles();
+    for h in handles {
+        if let Ok(body) = world.body(h) {
+            if body.kind != auralite_dynamics::BodyType::Dynamic {
+                continue;
+            }
+            // Simple check: if any collider center is submerged
+            let mut is_in_fluid = false;
+            for c in &body.colliders {
+                let world_center = body.position + body.rotation.rotate(c.offset);
+                if is_submerged(world_center, &fluid_positions, 0.5) {
+                    is_in_fluid = true;
+                    break;
+                }
+            }
+            if is_in_fluid {
+                let vol = 1.0; // approximation
+                let force = compute_buoyancy(body, &fluid_indices, &fluid_positions, fluid_density, vol, gravity);
+                let _ = world.apply_impulse(h, force * 0.016666668); // apply as impulse
+            }
+        }
+    }
 }
 
 // ─── Force Fields ─────────────────────────────────────────────────────────────

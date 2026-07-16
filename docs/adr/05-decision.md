@@ -1,5 +1,5 @@
 # ADR 05: broad-phase algorithm and structure
-**Status:** accepted; validated at M3.
+**Status:** accepted.
 
 ## Context
 The engine needs efficient broad-phase pair discovery for up to thousands of dynamic objects. Deterministic ordering is required for Tier A replay.

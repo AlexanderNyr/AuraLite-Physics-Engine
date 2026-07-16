@@ -2,7 +2,11 @@
 //!
 //! Runs all demo scenes, verifies determinism, and reports results.
 //! Each scene exercises a major subsystem and validates key properties.
+mod visualizer;
+
 use std::time::Instant;
+use std::fs::File;
+use std::io::Write;
 
 use auralite_collision::CollisionFilter;
 use auralite_dynamics::*;
@@ -50,6 +54,50 @@ fn main() {
     println!("  Subsystems: stacking, joints, ragdoll, CCD, triggers,");
     println!("  softbody/cloth, self-collision, particles, fluids,");
     println!("  buoyancy, vehicles, characters, replay/rollback, serialization");
+
+    // Phase 6: Visual Report
+    println!("\nGenerating visual report (scenes.html)...");
+    generate_visual_report();
+}
+
+fn generate_visual_report() {
+    let mut html = String::from(r#"<!DOCTYPE html><html><head><title>AuraLite Visual Report</title><style>body{background:#111;color:#eee;font-family:sans-serif;} .scene{margin:20px;display:inline-block;border:1px solid #333;padding:10px;background:#222;} svg{border:1px solid #444;}</style></head><body><h1>AuraLite Physics Visual Report</h1>"#);
+    
+    let viz = visualizer::SvgVisualizer::new();
+    
+    // Create a stack scene state and render it
+    let mut world = World2::default();
+    world.add_body(BodyBuilder2::static_body().add_collider(make_box_collider(10.0, 0.5))).unwrap();
+    for i in 0..5 {
+        world.add_body(BodyBuilder2::dynamic().position(Vec2 { x: (i as Real - 2.0)*1.1, y: 1.0 + i as Real * 1.5 }).add_collider(make_box_collider(0.5, 0.5))).unwrap();
+    }
+    // Simulate a bit
+    for _ in 0..120 { world.step(1.0/60.0).unwrap(); }
+    
+    html.push_str("<div class='scene'><h2>Stacking (120 steps)</h2>");
+    html.push_str(&viz.render2d(&world));
+    html.push_str("</div>");
+
+    // Ragdoll
+    let mut w2 = World2::default();
+    let mut handles = Vec::new();
+    for i in 0..6 {
+        let b = BodyBuilder2::dynamic().position(Vec2 { x: 0.0, y: 5.0 - i as Real * 0.8 }).add_collider(make_circle_collider(0.3));
+        handles.push(w2.add_body(b).unwrap());
+    }
+    for i in 0..5 {
+        w2.add_joint(JointConfig2::new(JointType2::Revolute, handles[i+1], handles[i], Vec2 { x: 0.0, y: -0.4 }, Vec2 { x: 0.0, y: 0.4 })).unwrap();
+    }
+    for _ in 0..60 { w2.step(1.0/60.0).unwrap(); }
+    html.push_str("<div class='scene'><h2>Ragdoll (60 steps)</h2>");
+    html.push_str(&viz.render2d(&w2));
+    html.push_str("</div>");
+
+    html.push_str("</body></html>");
+    
+    if let Ok(mut f) = File::create("scenes.html") {
+        f.write_all(html.as_bytes()).ok();
+    }
 }
 
 struct Scene {

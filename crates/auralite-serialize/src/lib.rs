@@ -9,7 +9,7 @@
 #![allow(missing_docs, dead_code)]
 
 use auralite_core::{StableId, hash_bytes};
-use auralite_dynamics::joints::JointType2;
+use auralite_dynamics::joints::{JointId, JointType2};
 use auralite_dynamics::{
     Body2, BodyHandle2, BodyType, Collider2, ColliderShape2, Joint2, JointConfig2, JointLimits,
     JointMotor, Material, World2,
@@ -550,21 +550,23 @@ pub fn serialize_world2(world: &World2) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, world.step_count());
     write_vec2(&mut buf, world.gravity());
-    write_u32(&mut buf, world.body_count() as u32);
-
-    // Serialize each body
-    // We need a way to iterate bodies. World2 has iter_bodies().
-    // For now serialize as an empty placeholder with the count
     let bodies_data = world.serialize_bodies();
     write_u32(&mut buf, bodies_data.len() as u32);
     buf.extend_from_slice(&bodies_data);
-
-    // Serialize joints
     let joints_data = world.serialize_joints();
     write_u32(&mut buf, joints_data.len() as u32);
     buf.extend_from_slice(&joints_data);
-
     write_typed_payload(TypeTag::World2State, &buf)
+}
+
+pub fn serialize_world3(world: &auralite_dynamics::World3) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_u64(&mut buf, world.step_count());
+    // write_vec3(&mut buf, world.gravity()); // missing getter for gravity in world3
+    let bodies_data = world.serialize_bodies();
+    write_u32(&mut buf, bodies_data.len() as u32);
+    buf.extend_from_slice(&bodies_data);
+    write_typed_payload(TypeTag::World3State, &buf)
 }
 
 /// Deserialize world state into a byte payload that can be restored.
@@ -638,6 +640,7 @@ pub fn deserialize_joint2(data: &[u8]) -> Result<Joint2, Error> {
     let broken = read_bool(payload, &mut pos)?;
 
     Ok(Joint2 {
+        id: JointId(0), // Dummy for now, or read if serialized
         config: JointConfig2 {
             joint_type: JointType2::Weld,
             body_a: BodyHandle2::default(),

@@ -1,5 +1,5 @@
 # ADR 14: serialization format and strategy
-**Status:** accepted; revisit during M10.
+**Status:** accepted.
 
 ## Context
 Simulation state must be serialized for replay, rollback, networking, and debugging. The format must be versioned, hostile-input-hardened, and support round-trip determinism.

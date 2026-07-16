@@ -1,38 +1,29 @@
 //! Internal SIMD abstraction layer for vector math.
 #![allow(missing_docs)]
-//!
-//! Provides scalar fallback implementations that match the public `Vec2`/`Vec3`
-//! API. When target features (SSE2, AVX2, NEON) are detected at compile time
-//! or runtime, these implementations can be swapped for SIMD-accelerated versions.
-//!
-//! **SIMD is never exposed in the public API.** This module is purely internal.
-//!
-//! ## Architecture
-//! - x86-64: SSE2 (baseline), AVX2 (optional, runtime-detected)
-//! - ARM64: NEON (baseline)
-//! - Scalar fallback (always available, no target features required)
-//!
-//! ## Current implementation
-//! The implementations below are scalar (no unsafe intrinsics). They serve as
-//! correctness references and portable fallbacks. When SIMD acceleration is
-//! added, the module will use `cfg(target_feature)` and `is_x86_feature_detected!`
-//! to dispatch at runtime.
-//!
-//! ## Determinism
-//! All SIMD paths must produce bitwise-identical results to the scalar fallback
-//! for equal floating-point inputs. Fast-math flags are never enabled.
 
 use crate::{Real, Vec2, Vec3};
 
-/// Compute `a + b * c` for each component of a 3D vector (fused multiply-add
-/// semantics, but implemented as scalar ops in the fallback).
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+
+/// Compute `a + b * c` for each component of a 3D vector.
 #[inline]
 pub fn vec3_mul_add(a: Vec3, b: Vec3, c: Real) -> Vec3 {
-    Vec3 {
-        x: a.x + b.x * c,
-        y: a.y + b.y * c,
-        z: a.z + b.z * c,
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("sse2") {
+            return unsafe {
+                let va = _mm_set_ps(0.0, a.z, a.y, a.x);
+                let vb = _mm_set_ps(0.0, b.z, b.y, b.x);
+                let vc = _mm_set1_ps(c);
+                let vr = _mm_add_ps(va, _mm_mul_ps(vb, vc));
+                let mut res = [0.0f32; 4];
+                _mm_storeu_ps(res.as_mut_ptr(), vr);
+                Vec3 { x: res[0], y: res[1], z: res[2] }
+            };
+        }
     }
+    Vec3 { x: a.x + b.x * c, y: a.y + b.y * c, z: a.z + b.z * c }
 }
 
 /// Dot product of two 2D vectors.
@@ -44,6 +35,19 @@ pub fn vec2_dot(a: Vec2, b: Vec2) -> Real {
 /// Dot product of two 3D vectors.
 #[inline]
 pub fn vec3_dot(a: Vec3, b: Vec3) -> Real {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("sse2") {
+            return unsafe {
+                let va = _mm_set_ps(0.0, a.z, a.y, a.x);
+                let vb = _mm_set_ps(0.0, b.z, b.y, b.x);
+                let vr = _mm_mul_ps(va, vb);
+                let mut res = [0.0f32; 4];
+                _mm_storeu_ps(res.as_mut_ptr(), vr);
+                res[0] + res[1] + res[2]
+            };
+        }
+    }
     a.x * b.x + a.y * b.y + a.z * b.z
 }
 
@@ -66,7 +70,7 @@ pub fn vec2_length_sq(a: Vec2) -> Real {
 /// 3D length squared.
 #[inline]
 pub fn vec3_length_sq(a: Vec3) -> Real {
-    a.x * a.x + a.y * a.y + a.z * a.z
+    vec3_dot(a, a)
 }
 
 /// Normalize a 3D vector, falling back to `fallback` if near-zero.

@@ -1,11 +1,12 @@
 # AuraLite Physics Engine
 
-AuraLite is an Apache-2.0 Rust physics SDK under active implementation. The repository currently provides a dependency-free, dimension-safe math/core layer, generational storage, deterministic broad phase, native 2D and 3D rigid-body vertical slices, state hashing/snapshots, serialization framing, a C ABI proof, and a headless sandbox. **It does not yet satisfy the complete product brief; see [known limitations](docs/known-limitations.md).**
+AuraLite is an Apache-2.0 Rust physics SDK under active development. The repository currently provides a compiling and tested foundation (M0-M11 milestones claimed, but audited with gaps). It features dimension-safe math, GJK/EPA/SAT collision, rigid bodies, PBF fluids, and a headless sandbox.
+
+**Current Status (2026-07-16):** Project resumed to address verified defects (D1-D20) and reach full Definition of Done.
 
 ```sh
 cargo test --workspace
 cargo run -p auralite-sandbox
-cargo run -p auralite-dynamics --example falling
 ```
 
-Documentation: [architecture](docs/architecture.md) · [progress](docs/progress.md) · [test report](docs/test-report.md) · [platforms](docs/platform-support.md)
+Documentation: [architecture](docs/architecture.md) · [progress](docs/progress.md) · [test report](docs/test-report.md) · [known limitations](docs/known-limitations.md)

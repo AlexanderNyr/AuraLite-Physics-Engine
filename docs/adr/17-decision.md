@@ -1,5 +1,5 @@
 # ADR 17: sandbox visualization and tool strategy
-**Status:** accepted; revisit during M11.
+**Status:** accepted.
 
 ## Context
 The interactive sandbox is the primary visualization and debugging tool for all engine subsystems. It must be a downstream consumer of the physics library (one-way dependency).

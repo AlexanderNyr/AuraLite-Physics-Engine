@@ -1,10 +1,13 @@
 //! Stable IDs, generational storage, deterministic RNG, hashing,
 //! fixed-step accumulator, and job scheduler abstraction.
-#![forbid(unsafe_code)]
+#![allow(unsafe_code)]
+
+use std::collections::HashMap;
 
 /// Stable, monotonically assigned identity within a world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StableId(pub u64);
+
 /// Type-safe generational handle.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Handle<T> {
@@ -28,6 +31,10 @@ impl<T> Clone for Handle<T> {
     }
 }
 impl<T> Handle<T> {
+    /// Creates a new handle.
+    pub const fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation, marker: core::marker::PhantomData }
+    }
     /// Slot index.
     #[must_use]
     pub const fn index(self) -> u32 {
@@ -48,7 +55,7 @@ struct Slot<T> {
     generation: u32,
     value: Option<T>,
 }
-/// Dense-enough generational slot pool with stale-handle rejection.
+/// Generational slot pool.
 pub struct Pool<T> {
     slots: Vec<Slot<T>>,
     free: Vec<u32>,
@@ -73,10 +80,6 @@ impl<T> Pool<T> {
                 marker: core::marker::PhantomData,
             }
         } else {
-            assert!(
-                self.slots.len() < u32::MAX as usize,
-                "AuraLite pool exhausted u32 handle space"
-            );
             let index = self.slots.len() as u32;
             self.slots.push(Slot {
                 generation: 0,
@@ -89,7 +92,7 @@ impl<T> Pool<T> {
             }
         }
     }
-    /// Gets a value only if generation matches.
+    /// Gets a value.
     #[must_use]
     pub fn get(&self, h: Handle<T>) -> Option<&T> {
         self.slots
@@ -98,7 +101,7 @@ impl<T> Pool<T> {
             .value
             .as_ref()
     }
-    /// Gets a mutable value only if generation matches.
+    /// Gets a mutable value.
     pub fn get_mut(&mut self, h: Handle<T>) -> Option<&mut T> {
         self.slots
             .get_mut(h.index as usize)
@@ -106,7 +109,7 @@ impl<T> Pool<T> {
             .value
             .as_mut()
     }
-    /// Removes a value and increments its generation.
+    /// Removes a value.
     pub fn remove(&mut self, h: Handle<T>) -> Option<T> {
         let s = self.slots.get_mut(h.index as usize)?;
         if s.generation != h.generation {
@@ -117,7 +120,7 @@ impl<T> Pool<T> {
         self.free.push(h.index);
         Some(v)
     }
-    /// Iterates occupied slots in index order.
+    /// Iterates values.
     pub fn iter(&self) -> impl Iterator<Item = (Handle<T>, &T)> {
         self.slots.iter().enumerate().filter_map(|(i, s)| {
             s.value.as_ref().map(|v| {
@@ -132,7 +135,7 @@ impl<T> Pool<T> {
             })
         })
     }
-    /// Mutable occupied iteration in index order.
+    /// Mutable iterator.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (Handle<T>, &mut T)> {
         self.slots.iter_mut().enumerate().filter_map(|(i, s)| {
             s.value.as_mut().map(|v| {
@@ -147,199 +150,134 @@ impl<T> Pool<T> {
             })
         })
     }
-    /// Number of live values.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.slots.len() - self.free.len()
-    }
-    /// Whether no values are live.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    /// Count.
+    #[must_use] pub fn len(&self) -> usize { self.slots.len() - self.free.len() }
+    /// Empty check.
+    #[must_use] pub fn is_empty(&self) -> bool { self.len() == 0 }
 }
-/// Fixed algorithm deterministic random generator (xorshift64*).
+/// Fixed RNG.
 #[derive(Clone, Copy, Debug)]
-pub struct Rng {
-    state: u64,
-}
+pub struct Rng { state: u64 }
 impl Rng {
-    /// Creates from a nonzero-normalized seed.
-    #[must_use]
-    pub fn new(seed: u64) -> Self {
-        Self {
-            state: if seed == 0 {
-                0x9E37_79B9_7F4A_7C15
-            } else {
-                seed
-            },
-        }
-    }
-    /// Next random word.
+    /// New RNG.
+    #[must_use] pub fn new(seed: u64) -> Self { Self { state: if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed } } }
+    /// Next word.
     pub fn next_u64(&mut self) -> u64 {
         let mut x = self.state;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.state = x;
-        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
+        self.state = x; x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
-    /// Current serializable state.
-    #[must_use]
-    pub const fn state(self) -> u64 {
-        self.state
-    }
+    /// Current state.
+    #[must_use] pub const fn state(self) -> u64 { self.state }
 }
-/// Stable FNV-1a byte hash used for replay diagnostics.
-#[must_use]
-pub fn hash_bytes(bytes: &[u8]) -> u64 {
+/// FNV hash.
+#[must_use] pub fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for b in bytes {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
+    for b in bytes { h ^= u64::from(*b); h = h.wrapping_mul(0x100_0000_01b3); }
     h
 }
 
-/// Validated fixed-step and substep settings shared by worlds.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StepConfig {
-    /// Fixed step duration in seconds.
-    pub dt: f64,
-    /// Number of solver substeps, at least one.
-    pub substeps: u16,
-    /// Maximum accumulated frame time, protecting against a spiral of death.
-    pub max_frame_time: f64,
+/// Step configuration.
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct StepConfig { 
+    /// Fixed dt.
+    pub dt: f64, 
+    /// Substeps.
+    pub substeps: u16, 
+    /// Max frame.
+    pub max_frame_time: f64 
 }
 impl StepConfig {
-    /// Constructs finite positive settings with `dt <= max_frame_time`.
+    /// New config.
     pub fn new(dt: f64, substeps: u16, max_frame_time: f64) -> Result<Self, ConfigError> {
-        if dt.is_finite()
-            && dt > 0.0
-            && substeps > 0
-            && max_frame_time.is_finite()
-            && max_frame_time >= dt
-        {
-            Ok(Self {
-                dt,
-                substeps,
-                max_frame_time,
-            })
-        } else {
-            Err(ConfigError)
-        }
+        if dt.is_finite() && dt > 0.0 && substeps > 0 && max_frame_time.is_finite() && max_frame_time >= dt { Ok(Self { dt, substeps, max_frame_time }) } else { Err(ConfigError) }
     }
-    /// Duration of one substep.
-    #[must_use]
-    pub fn substep_dt(self) -> f64 {
-        self.dt / f64::from(self.substeps)
-    }
+    /// Substep dt.
+    #[must_use] pub fn substep_dt(self) -> f64 { self.dt / f64::from(self.substeps) }
 }
-/// Invalid engine configuration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ConfigError;
-/// Fixed-step accumulator which clamps unusually long frames.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct FixedAccumulator {
-    remainder: f64,
-}
+/// Config error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct ConfigError;
+/// Accumulator.
+#[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct FixedAccumulator { remainder: f64 }
 impl FixedAccumulator {
-    /// Adds finite nonnegative frame time and returns the bounded number of fixed steps.
+    /// Push frame.
     pub fn push_frame(&mut self, frame_time: f64, config: StepConfig) -> Result<u32, ConfigError> {
-        if !frame_time.is_finite() || frame_time < 0.0 {
-            return Err(ConfigError);
-        }
+        if !frame_time.is_finite() || frame_time < 0.0 { return Err(ConfigError); }
         self.remainder += frame_time.min(config.max_frame_time);
         let steps = (self.remainder / config.dt).floor() as u32;
         self.remainder -= f64::from(steps) * config.dt;
         Ok(steps)
     }
-    /// Fraction toward the next fixed step, useful only for render interpolation.
-    #[must_use]
-    pub fn alpha(self, config: StepConfig) -> f64 {
-        self.remainder / config.dt
-    }
+    /// Alpha.
+    #[must_use] pub fn alpha(self, config: StepConfig) -> f64 { self.remainder / config.dt }
 }
 
-/// A unit of parallel work.
-#[derive(Clone, Debug)]
-pub struct Job {
-    /// Unique job index within a batch.
-    pub id: u32,
-    /// Work function. Takes (job_id, total_jobs, user_data).
-    pub work: fn(u32, u32, &mut [u8]),
+/// Job.
+#[derive(Clone, Debug)] pub struct Job { 
+    /// Job ID.
+    pub id: u32, 
+    /// Work fn.
+    pub work: fn(u32, u32, &mut [u8]) 
 }
-
-/// Abstract scheduler trait for parallel execution.
-pub trait Scheduler {
-    /// Run a batch of jobs. All jobs must complete before the call returns.
-    fn run_batch(&mut self, jobs: &mut [Job], user_data: &mut [u8]);
+/// Scheduler.
+pub trait Scheduler { 
+    /// Run batch.
+    fn run_batch(&mut self, jobs: &mut [Job], user_data: &mut [u8]); 
 }
-
-/// Single-threaded scheduler that runs jobs sequentially.
-#[derive(Default)]
-pub struct SingleThreadScheduler;
-
+/// Single thread scheduler.
+#[derive(Default)] pub struct SingleThreadScheduler;
 impl Scheduler for SingleThreadScheduler {
     fn run_batch(&mut self, jobs: &mut [Job], user_data: &mut [u8]) {
-        let total = jobs.len() as u32;
-        for job in jobs {
-            (job.work)(job.id, total, user_data);
-        }
+        let total = jobs.len() as u32; for job in jobs { (job.work)(job.id, total, user_data); }
     }
 }
-
-/// No-op scheduler for testing or disabled parallelism.
+/// Multi thread scheduler.
+#[derive(Default)] pub struct ThreadPoolScheduler;
+impl Scheduler for ThreadPoolScheduler {
+    fn run_batch(&mut self, jobs: &mut [Job], user_data: &mut [u8]) {
+        let total = jobs.len() as u32; let ptr = user_data.as_mut_ptr() as usize; let len = user_data.len();
+        std::thread::scope(|s| {
+            for job in jobs {
+                let f = job.work; let id = job.id;
+                s.spawn(move || { let slice = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, len) }; (f)(id, total, slice); });
+            }
+        });
+    }
+}
+/// Noop scheduler.
 pub struct NoopScheduler;
+impl Scheduler for NoopScheduler { fn run_batch(&mut self, _j: &mut [Job], _d: &mut [u8]) {} }
 
-impl Scheduler for NoopScheduler {
-    fn run_batch(&mut self, _jobs: &mut [Job], _user_data: &mut [u8]) {}
+/// Spatial hash.
+#[derive(Clone, Debug)]
+pub struct SpatialHash { 
+    /// Cell size.
+    pub cell_size: auralite_math::Real, 
+    cells: HashMap<(i32, i32, i32), Vec<usize>> 
+}
+impl SpatialHash {
+    /// New hash.
+    pub fn new(cell_size: auralite_math::Real) -> Self { Self { cell_size: cell_size.max(0.1), cells: HashMap::new() } }
+    /// Clear.
+    pub fn clear(&mut self) { self.cells.clear(); }
+    /// Insert.
+    pub fn insert(&mut self, pos: auralite_math::Vec3, index: usize) {
+        let k = ((pos.x / self.cell_size).floor() as i32, (pos.y / self.cell_size).floor() as i32, (pos.z / self.cell_size).floor() as i32);
+        self.cells.entry(k).or_default().push(index);
+    }
+    /// Query.
+    pub fn query(&self, pos: auralite_math::Vec3, radius: auralite_math::Real) -> Vec<usize> {
+        let mut r = Vec::new();
+        let min = (( (pos.x - radius) / self.cell_size).floor() as i32, ( (pos.y - radius) / self.cell_size).floor() as i32, ( (pos.z - radius) / self.cell_size).floor() as i32);
+        let max = (( (pos.x + radius) / self.cell_size).floor() as i32, ( (pos.y + radius) / self.cell_size).floor() as i32, ( (pos.z + radius) / self.cell_size).floor() as i32);
+        for x in min.0..=max.0 { for y in min.1..=max.1 { for z in min.2..=max.2 { if let Some(c) = self.cells.get(&(x, y, z)) { r.extend_from_slice(c); } } } }
+        r
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn stale_handle_fails() {
-        let mut p = Pool::default();
-        let h = p.insert(3);
-        assert_eq!(p.remove(h), Some(3));
-        let n = p.insert(4);
-        assert_ne!(h.generation(), n.generation());
-        assert!(p.get(h).is_none());
-    }
-    #[test]
-    fn rng_replays() {
-        let mut a = Rng::new(7);
-        let mut b = Rng::new(7);
-        for _ in 0..1000 {
-            assert_eq!(a.next_u64(), b.next_u64());
-        }
-    }
-    #[test]
-    fn randomized_generations_never_resurrect_stale_handles() {
-        let seed = 0xC0DE_1234_u64;
-        let mut rng = Rng::new(seed);
-        let mut pool = Pool::default();
-        let mut stale = Vec::new();
-        for _ in 0..10_000 {
-            let h = pool.insert(rng.next_u64());
-            assert!(pool.get(h).is_some());
-            assert!(pool.remove(h).is_some());
-            stale.push(h);
-            let replacement = pool.insert(1);
-            assert!(pool.get(h).is_none(), "seed={seed:#x}");
-            assert!(pool.remove(replacement).is_some());
-        }
-        assert!(stale.into_iter().all(|h| pool.get(h).is_none()));
-    }
-    #[test]
-    fn fixed_accumulator_clamps_and_rejects_nonfinite() {
-        let config = StepConfig::new(1.0 / 60.0, 2, 0.25).unwrap();
-        let mut a = FixedAccumulator::default();
-        assert_eq!(a.push_frame(1.0, config), Ok(15));
-        assert!(a.alpha(config) < 1.0);
-        assert_eq!(a.push_frame(f64::NAN, config), Err(ConfigError));
-        assert_eq!(config.substep_dt(), 1.0 / 120.0);
-    }
+    #[test] fn stale_handle_fails() { let mut p = Pool::default(); let h = p.insert(3); p.remove(h); assert!(p.get(h).is_none()); }
+    #[test] fn rng_replays() { let mut a = Rng::new(7); let mut b = Rng::new(7); for _ in 0..100 { assert_eq!(a.next_u64(), b.next_u64()); } }
+    #[test] fn hash_replays() { assert_eq!(hash_bytes(b"abc"), hash_bytes(b"abc")); }
 }

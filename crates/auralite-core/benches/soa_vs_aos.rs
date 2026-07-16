@@ -5,9 +5,6 @@
 //!
 //! To run: cargo bench --bench soa_vs_aos
 
-#[path = "../crates/auralite-math/src/lib.rs"]
-mod auralite_math;
-
 use auralite_math::{Vec3, Real};
 
 const N: usize = 10_000;

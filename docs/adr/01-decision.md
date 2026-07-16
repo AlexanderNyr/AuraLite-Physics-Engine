@@ -1,5 +1,5 @@
 # ADR 01: scalar and precision policy
-**Status:** accepted; validated at M1.
+**Status:** accepted.
 
 ## Context
 Real-time physics benefits from f32 bandwidth, while large-world/offline users need f64. Stable Rust and a clean public scalar type are required.

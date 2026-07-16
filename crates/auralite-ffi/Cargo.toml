@@ -8,5 +8,6 @@ rust-version.workspace = true
 crate-type = ["rlib", "staticlib", "cdylib"]
 [dependencies]
 auralite-dynamics = { path = "../auralite-dynamics" }
+auralite-math = { path = "../auralite-math" }
 [lints]
 workspace = true

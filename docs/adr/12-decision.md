@@ -1,5 +1,5 @@
 # ADR 12: scheduling and determinism architecture
-**Status:** accepted; revisit during M9.
+**Status:** accepted.
 
 ## Context
 Multi-threaded execution must preserve bitwise-identical deterministic results compared to the single-threaded execution path.

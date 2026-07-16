@@ -12,6 +12,9 @@ dependencies = [
 [[package]]
 name = "auralite-core"
 version = "0.1.0"
+dependencies = [
+ "auralite-math",
+]
 
 [[package]]
 name = "auralite-dynamics"
@@ -28,6 +31,7 @@ name = "auralite-ffi"
 version = "0.1.0"
 dependencies = [
  "auralite-dynamics",
+ "auralite-math",
 ]
 
 [[package]]

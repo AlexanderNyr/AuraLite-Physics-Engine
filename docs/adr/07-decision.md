@@ -1,5 +1,5 @@
 # ADR 07: contact manifolds and persistence
-**Status:** accepted; validated at M3.
+**Status:** accepted.
 
 ## Context
 Stable contact solving requires persistent contact points across frames to enable warm starting, reduce jitter, and produce correct stacking behavior.

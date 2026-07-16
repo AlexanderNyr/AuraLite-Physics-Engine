@@ -98,6 +98,7 @@ impl Default for JointMotor {
 /// Runtime 2D joint state.
 #[derive(Clone, Debug)]
 pub struct Joint2 {
+    pub id: JointId,
     pub config: JointConfig2,
     pub impulse: Real,
     pub accumulated_position_error: Real,
@@ -105,8 +106,9 @@ pub struct Joint2 {
 }
 
 impl Joint2 {
-    pub fn new(config: JointConfig2) -> Self {
+    pub fn new(id: JointId, config: JointConfig2) -> Self {
         Self {
+            id,
             config,
             impulse: 0.0,
             accumulated_position_error: 0.0,
@@ -159,6 +161,10 @@ struct JointBodyData {
     sleeping_b: bool,
 }
 
+fn perp(v: Vec2) -> Vec2 {
+    Vec2 { x: -v.y, y: v.x }
+}
+
 impl Joint2 {
     /// Solve this joint constraint, applying impulses to connected bodies.
     /// Returns the impulse magnitude applied.
@@ -182,64 +188,43 @@ impl Joint2 {
 
         match self.config.joint_type {
             JointType2::Weld => {
+                let world_a = data.pos_a + data.rot_a.rotate(self.config.anchor_a);
+                let world_b = data.pos_b + data.rot_b.rotate(self.config.anchor_b);
                 let error = world_b - world_a;
+                let rel_vel = (data.vel_b + perp(world_b - data.pos_b) * data.ang_b) 
+                            - (data.vel_a + perp(world_a - data.pos_a) * data.ang_a);
+                
                 let total_im = data.inv_mass_a + data.inv_mass_b;
-                if total_im <= ABS_EPSILON {
-                    return 0.0;
-                }
-                let impulse = error * 0.5 / total_im;
+                if total_im <= ABS_EPSILON { return 0.0; }
+                
+                let bias = error * 0.2 / 0.016666668;
+                let impulse = (bias - rel_vel) * 0.1 / total_im;
                 let imp = impulse.length();
                 if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
                     self.broken = true;
                     return imp;
                 }
                 self.impulse += imp;
-                crate::apply_impulse2(
-                    bodies,
-                    self.config.body_a,
-                    self.config.body_b,
-                    impulse,
-                    world_a,
-                );
+                crate::apply_impulse2(bodies, self.config.body_a, self.config.body_b, impulse, world_a);
                 imp
             }
             JointType2::Distance => {
+                let world_a = data.pos_a + data.rot_a.rotate(self.config.anchor_a);
+                let world_b = data.pos_b + data.rot_b.rotate(self.config.anchor_b);
                 let diff = world_b - world_a;
                 let dist = diff.length();
-                if dist <= ABS_EPSILON {
-                    return 0.0;
-                }
+                if dist <= ABS_EPSILON { return 0.0; }
                 let dir = diff / dist;
                 let rest = (self.config.anchor_b - self.config.anchor_a).length();
-                let target = if self.config.limits.enabled {
-                    dist.clamp(self.config.limits.min, self.config.limits.max)
-                } else {
-                    rest
-                };
-                let error = dist - target;
-                if error.abs() <= ABS_EPSILON {
-                    return 0.0;
-                }
+                let error = dist - rest;
+                
+                let rel_vel = (data.vel_b - data.vel_a).dot(dir);
                 let total_im = data.inv_mass_a + data.inv_mass_b;
-                if total_im <= ABS_EPSILON {
-                    return 0.0;
-                }
-                let impulse = dir * error * 0.5 / total_im;
-                let imp = impulse.length();
-                if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
-                    self.broken = true;
-                    return imp;
-                }
-                self.impulse += imp;
-                self.accumulated_position_error += error.abs();
-                crate::apply_impulse2(
-                    bodies,
-                    self.config.body_a,
-                    self.config.body_b,
-                    impulse,
-                    world_a,
-                );
-                imp
+                if total_im <= ABS_EPSILON { return 0.0; }
+                
+                let lambda = (error * 0.1 - rel_vel * 0.01) / total_im;
+                crate::apply_impulse2(bodies, self.config.body_a, self.config.body_b, dir * lambda, world_a);
+                lambda.abs()
             }
             JointType2::Spring { stiffness, damping } => {
                 let diff = world_b - world_a;
@@ -411,11 +396,15 @@ pub enum JointType3 {
     BallSocket,
     Distance,
     Spring { stiffness: Real, damping: Real },
+    Weld,
+    Hinge { axis_local: Vec3 },
+    Slider { axis_local: Vec3 },
 }
 
 /// Runtime 3D joint state.
 #[derive(Clone, Debug)]
 pub struct Joint3 {
+    pub id: JointId,
     pub config: JointConfig3,
     pub impulse: Real,
     pub accumulated_position_error: Real,
@@ -423,12 +412,178 @@ pub struct Joint3 {
 }
 
 impl Joint3 {
-    pub fn new(config: JointConfig3) -> Self {
+    pub fn new(id: JointId, config: JointConfig3) -> Self {
         Self {
+            id,
             config,
             impulse: 0.0,
             accumulated_position_error: 0.0,
             broken: false,
+        }
+    }
+
+    /// Solve 3D constraint.
+    pub fn solve(&mut self, bodies: &mut Pool<crate::Body3>) -> Real {
+        if self.broken {
+            return 0.0;
+        }
+        let (ba_pos, ba_rot, ba_vel, _ba_ang, ba_im, _ba_ii, _ba_kind, ba_sleep) = {
+            let a = match bodies.get(self.config.body_a) {
+                Some(a) => a,
+                None => {
+                    self.broken = true;
+                    return 0.0;
+                }
+            };
+            (
+                a.position,
+                a.rotation,
+                a.velocity,
+                a.angular_velocity,
+                a.effective_inv_mass(),
+                a.inv_inertia_diagonal,
+                a.kind,
+                a.sleeping,
+            )
+        };
+        let (bb_pos, bb_rot, bb_vel, _bb_ang, bb_im, _bb_ii, _bb_kind, bb_sleep) = {
+            let b = match bodies.get(self.config.body_b) {
+                Some(b) => b,
+                None => {
+                    self.broken = true;
+                    return 0.0;
+                }
+            };
+            (
+                b.position,
+                b.rotation,
+                b.velocity,
+                b.angular_velocity,
+                b.effective_inv_mass(),
+                b.inv_inertia_diagonal,
+                b.kind,
+                b.sleeping,
+            )
+        };
+
+        if ba_sleep && bb_sleep {
+            return 0.0;
+        }
+
+        let world_a = ba_pos + ba_rot.rotate(self.config.anchor_a);
+        let world_b = bb_pos + bb_rot.rotate(self.config.anchor_b);
+
+        match self.config.joint_type {
+            JointType3::BallSocket | JointType3::Weld => {
+                let error = world_b - world_a;
+                let total_im = ba_im + bb_im;
+                if total_im <= ABS_EPSILON {
+                    return 0.0;
+                }
+                let impulse = error * 0.5 / total_im;
+                let imp = impulse.length();
+                if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
+                    self.broken = true;
+                    return imp;
+                }
+                self.impulse += imp;
+                self.accumulated_position_error += imp;
+                crate::apply_impulse3(
+                    bodies,
+                    self.config.body_a,
+                    self.config.body_b,
+                    impulse,
+                    world_a,
+                );
+                imp
+            }
+            JointType3::Distance => {
+                let diff = world_b - world_a;
+                let dist = diff.length();
+                if dist <= ABS_EPSILON {
+                    return 0.0;
+                }
+                let dir = diff / dist;
+                let rest = (self.config.anchor_b - self.config.anchor_a).length();
+                let target = if self.config.limits.enabled {
+                    dist.clamp(self.config.limits.min, self.config.limits.max)
+                } else {
+                    rest
+                };
+                let error = dist - target;
+                let total_im = ba_im + bb_im;
+                if total_im <= ABS_EPSILON {
+                    return 0.0;
+                }
+                let impulse = dir * error * 0.5 / total_im;
+                let imp = impulse.length();
+                if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
+                    self.broken = true;
+                    return imp;
+                }
+                crate::apply_impulse3(
+                    bodies,
+                    self.config.body_a,
+                    self.config.body_b,
+                    impulse,
+                    world_a,
+                );
+                imp
+            }
+            JointType3::Spring { stiffness, damping } => {
+                let diff = world_b - world_a;
+                let dist = diff.length();
+                if dist <= ABS_EPSILON {
+                    return 0.0;
+                }
+                let dir = diff / dist;
+                let rest = (self.config.anchor_b - self.config.anchor_a).length();
+                let spring_force = (dist - rest) * stiffness;
+                let rel_vel = (bb_vel - ba_vel).dot(dir);
+                let damping_force = rel_vel * damping;
+                let total_force = spring_force + damping_force;
+                let impulse = dir * total_force * 0.016666668;
+                crate::apply_impulse3(
+                    bodies,
+                    self.config.body_a,
+                    self.config.body_b,
+                    impulse,
+                    world_a,
+                );
+                impulse.length()
+            }
+            JointType3::Hinge { axis_local: _ } => {
+                let error = world_b - world_a;
+                let total_im = ba_im + bb_im;
+                if total_im > ABS_EPSILON {
+                    let impulse = error * 0.5 / total_im;
+                    crate::apply_impulse3(
+                        bodies,
+                        self.config.body_a,
+                        self.config.body_b,
+                        impulse,
+                        world_a,
+                    );
+                }
+                0.0
+            }
+            JointType3::Slider { axis_local } => {
+                let world_axis = ba_rot.rotate(axis_local).normalized_or(Vec3::X);
+                let offset = world_b - world_a;
+                let lateral = offset - world_axis * offset.dot(world_axis);
+                let total_im = ba_im + bb_im;
+                if total_im > ABS_EPSILON {
+                    let impulse = lateral * 0.5 / total_im;
+                    crate::apply_impulse3(
+                        bodies,
+                        self.config.body_a,
+                        self.config.body_b,
+                        impulse,
+                        world_a,
+                    );
+                }
+                0.0
+            }
         }
     }
 }

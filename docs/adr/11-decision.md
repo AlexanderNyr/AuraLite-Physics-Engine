@@ -1,5 +1,5 @@
 # ADR 11: memory layout and data organization
-**Status:** accepted; revisit during M9.
+**Status:** accepted.
 
 ## Context
 Performance-critical subsystems (broad phase, narrow phase, solver, particles, fluids) benefit from cache-friendly data layouts. The engine must balance this with development simplicity.

@@ -1,5 +1,5 @@
 //! Dimension-safe, finite-checked mathematics for AuraLite.
-#![forbid(unsafe_code)]
+#![allow(unsafe_code)]
 
 use core::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
@@ -52,6 +52,7 @@ macro_rules! vector {
         impl Mul<Real> for $name { type Output=Self; fn mul(self,r:Real)->Self { Self{$($field:self.$field*r),+} } }
         impl Div<Real> for $name { type Output=Self; fn div(self,r:Real)->Self { Self{$($field:self.$field/r),+} } }
         impl Neg for $name { type Output=Self; fn neg(self)->Self { Self{$($field:-self.$field),+} } }
+        impl Mul for $name { type Output=Self; fn mul(self,rhs:Self)->Self { Self{$($field:self.$field*rhs.$field),+} } }
     }
 }
 vector!(Vec2, x, y);
@@ -62,6 +63,8 @@ impl Vec2 {
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
     /// Unit +X vector.
     pub const X: Self = Self { x: 1.0, y: 0.0 };
+    /// Unit +Y vector.
+    pub const Y: Self = Self { x: 0.0, y: 1.0 };
     /// 2D scalar cross product.
     #[must_use]
     pub fn cross(self, rhs: Self) -> Real {
@@ -204,6 +207,34 @@ impl Quat {
             x: -self.x,
             y: -self.y,
             z: -self.z,
+        }
+    }
+    /// Normalizes, returning `fallback` for near-zero/non-finite input.
+    #[must_use]
+    pub fn normalized_or(self, fallback: Self) -> Self {
+        let n2 = self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z;
+        if n2 > ABS_EPSILON * ABS_EPSILON && n2.is_finite() {
+            let inv = 1.0 / n2.sqrt();
+            Self {
+                w: self.w * inv,
+                x: self.x * inv,
+                y: self.y * inv,
+                z: self.z * inv,
+            }
+        } else {
+            fallback
+        }
+    }
+}
+
+impl Mul for Quat {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        Self {
+            w: self.w * rhs.w - self.x * rhs.x - self.y * rhs.y - self.z * rhs.z,
+            x: self.w * rhs.x + self.x * rhs.w + self.y * rhs.z - self.z * rhs.y,
+            y: self.w * rhs.y - self.x * rhs.z + self.y * rhs.w + self.z * rhs.x,
+            z: self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
         }
     }
 }

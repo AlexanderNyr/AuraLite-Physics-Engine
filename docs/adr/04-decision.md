@@ -1,5 +1,5 @@
 # ADR 04: object storage and identity
-**Status:** accepted; validated at M1.
+**Status:** accepted.
 
 ## Decision
 Objects live in slot pools addressed by `(u32 index,u32 generation)` handles. Removal increments generation before free-list reuse. Stable monotonic u64 IDs provide serialized identity and canonical ordering. Pool exhaustion fails explicitly rather than truncating an index.

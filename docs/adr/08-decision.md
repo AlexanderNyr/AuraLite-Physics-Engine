@@ -1,5 +1,5 @@
 # ADR 08: solver and stabilization strategy
-**Status:** accepted; revisit during M4.
+**Status:** accepted.
 
 ## Context
 Rigid-body contacts and constraints must be resolved with a stable, deterministic solver. Stacking, friction, and restitution require iterative methods.

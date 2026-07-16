@@ -540,59 +540,23 @@ pub fn build_soft_cube(
 
 // ─── Self-Collision Spatial Hash ───────────────────────────────────────────
 
-#[derive(Clone, Debug)]
-pub struct SpatialHash {
-    #[allow(dead_code)]
-    cell_size: Real,
-    cells: Vec<Vec<(usize, Vec3)>>,
-}
-
-impl SpatialHash {
-    pub fn new(cell_size: Real) -> Self {
-        Self {
-            cell_size: cell_size.max(0.1),
-            cells: Vec::new(),
-        }
-    }
-    pub fn build(&mut self, particles: &[Particle]) {
-        let num_cells = 256;
-        self.cells = vec![Vec::new(); num_cells];
-        for (i, p) in particles.iter().enumerate() {
-            if p.pinned {
-                continue;
-            }
-            let key = (p.position.x * 73856093.0).floor() as usize
-                ^ (p.position.y * 19349663.0).floor() as usize
-                ^ (p.position.z * 83492791.0).floor() as usize;
-            self.cells[key % num_cells].push((i, p.position));
-        }
-    }
-    pub fn query(&self, pos: Vec3, radius: Real) -> Vec<usize> {
-        let r2 = radius * radius;
-        let mut results = Vec::new();
-        for cell in &self.cells {
-            for &(idx, ppos) in cell {
-                if (ppos - pos).length_squared() <= r2 {
-                    results.push(idx);
-                }
-            }
-        }
-        results
-    }
-}
-
 /// Apply self-collision to a soft body.
 pub fn apply_self_collision(sb: &mut SoftBody, particle_radius: Real) {
-    let mut hash = SpatialHash::new(particle_radius * 4.0);
-    hash.build(&sb.particles);
+    let mut hash = auralite_core::SpatialHash::new(particle_radius * 2.0);
+    for (i, p) in sb.particles.iter().enumerate() {
+        if !p.pinned {
+            hash.insert(p.position, i);
+        }
+    }
     let n = sb.particles.len();
     let min_dist = particle_radius * 2.0;
+    let r2 = min_dist * min_dist;
     for i in 0..n {
         if sb.particles[i].pinned {
             continue;
         }
         let pos = sb.particles[i].position;
-        for &j in &hash.query(pos, particle_radius * 3.0) {
+        for &j in &hash.query(pos, min_dist) {
             if j <= i {
                 continue;
             }
@@ -600,16 +564,13 @@ pub fn apply_self_collision(sb: &mut SoftBody, particle_radius: Real) {
                 continue;
             }
             let diff = sb.particles[j].position - pos;
-            let dist = diff.length();
-            if dist < min_dist && dist > ABS_EPSILON {
+            let d2 = diff.length_squared();
+            if d2 < r2 && d2 > ABS_EPSILON {
+                let dist = d2.sqrt();
                 let dir = diff / dist;
                 let correction = (min_dist - dist) * 0.5;
-                if !sb.particles[i].pinned {
-                    sb.particles[i].position -= dir * correction;
-                }
-                if !sb.particles[j].pinned {
-                    sb.particles[j].position += dir * correction;
-                }
+                sb.particles[i].position -= dir * correction;
+                sb.particles[j].position += dir * correction;
             }
         }
     }
@@ -907,8 +868,10 @@ mod tests {
                 1.0,
             ));
         }
-        let mut hash = SpatialHash::new(1.0);
-        hash.build(&particles);
+        let mut hash = auralite_core::SpatialHash::new(1.0);
+        for (i, p) in particles.iter().enumerate() {
+            hash.insert(p.position, i);
+        }
         let results = hash.query(Vec3::ZERO, 1.0);
         assert!(!results.is_empty());
         assert!(results.contains(&0));

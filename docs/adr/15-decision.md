@@ -1,5 +1,5 @@
 # ADR 15: FFI and ABI strategy
-**Status:** accepted; revisit during M10.
+**Status:** accepted.
 
 ## Context
 The engine exposes a C ABI for use from other languages (C, C++, C#, Python via ctypes, etc.). Safety, lifetime management, and deterministic ABI are critical.

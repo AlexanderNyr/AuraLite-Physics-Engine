@@ -1,5 +1,5 @@
 # ADR 02: native 2D/3D sharing
-**Status:** accepted; validated at M1.
+**Status:** accepted.
 
 ## Context
 Types must prevent accidental dimensional mixing without making 2D a 3D wrapper.

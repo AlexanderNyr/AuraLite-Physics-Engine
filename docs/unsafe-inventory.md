@@ -1,2 +1,5 @@
 # Unsafe inventory
-Only `auralite-ffi::auralite_world2_create` uses an unsafe pointer write. It checks null; its documented C contract requires alignment and writable storage. The block has a `SAFETY` comment. `#[unsafe(no_mangle)]` attributes intentionally export four ABI symbols. Pure logic crates use `#![forbid(unsafe_code)]`.
+- `auralite-ffi`: Uses unsafe pointer writes for C ABI compatibility. Checked for null and documented alignment requirements.
+- `auralite-math`: Uses x86_64 intrinsics in `simd.rs` for performance. Protected by `is_x86_feature_detected!` and `target_arch` checks.
+- `auralite-core`: Uses `std::slice::from_raw_parts_mut` in `ThreadPoolScheduler` to share user data across threads during job execution. Controlled by `std::thread::scope`.
+- `auralite-gpu`: Trait shells for future backend implementation.

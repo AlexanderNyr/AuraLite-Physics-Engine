@@ -4,5 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+auralite-math = { path = "../auralite-math" }
+
+[[bench]]
+name = "soa_vs_aos"
+harness = false
+
 [lints]
 workspace = true
