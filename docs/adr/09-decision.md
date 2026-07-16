@@ -1,13 +1,30 @@
-# ADR 09: project decision
-**Status:** accepted for foundation / revisit before dependent milestone.
+# ADR 09: soft-body and cloth method
+**Status:** accepted; revisit during M6.
 
 ## Context
-The product requires correctness, deterministic ordering, portability, and measured optimization.
+Deformable bodies (cloth, soft cubes, elastic objects) require a simulation method that integrates with the existing constraint solver architecture and is deterministic.
+
 ## Decision
-Use dependency-free stable Rust reference paths; f32 default with opt-in f64 math; separate native 2D/3D worlds; +Y-up right-handed metres; generational pools and stable IDs; bounded/canonical algorithms; XPBD planned for deformables, PBF planned for fluid; CPU reference before SIMD/GPU; little-endian versioned serialization; isolated C ABI unsafe; sandbox remains downstream.
+- **XPBD (Extended Position-Based Dynamics)** (planned): Compliance-based constraints (stretch, shear, bend, volume) with substep iteration. Chosen over FEM and mass-spring systems because:
+  - Natural integration with the existing sequential-impulse constraint pipeline.
+  - Deterministic and controllable with iteration counts.
+  - Well-understood cloth and soft-body behavior.
+- **Self-collision**: Spatial hashing for broad-phase self-collision detection on deformable meshes.
+- **Rigid coupling**: Two-way coupling via attachment constraints (pin, weld, distance) between deformable vertices and rigid bodies.
+- **Wind and aerodynamics**: Per-face aerodynamic force model.
+
 ## Alternatives
-External physics engines are forbidden. Premature GPU-only, nightly SIMD, pointer APIs, and unordered simulation maps were rejected.
+- FEM: More accurate for biomechanics but heavier and harder to make deterministic.
+- Classic mass-spring: Prone to unrealistic behavior without extensive tuning.
+- FTL (Finite Volume): Proven but complex for real-time.
+
 ## Consequences
-More implementation work, but auditable behavior and portable fallback. This ADR must be specialized with measurements during its owning milestone.
+- XPBD requires careful compliance tuning to avoid excessive stretch/bounce.
+- Self-collision spatial hash adds memory cost but ensures O(n) expected performance.
+- Cloth folding and crumpling naturally handled.
+
 ## Validation
-Strict build/tests, differential/property tests, state hashes, allocation/performance measurements, and honest platform matrix.
+- Hanging cloth converges with stretch error below 1% under gravity.
+- Soft cube volume error within 5% over 60 s.
+- Folded cloth self-collision stable (no NaN or explosion).
+- Deterministic replays identical across 10,000 steps.

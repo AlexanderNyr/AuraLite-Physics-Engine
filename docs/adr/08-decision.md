@@ -1,13 +1,26 @@
-# ADR 08: project decision
-**Status:** accepted for foundation / revisit before dependent milestone.
+# ADR 08: solver and stabilization strategy
+**Status:** accepted; revisit during M4.
 
 ## Context
-The product requires correctness, deterministic ordering, portability, and measured optimization.
+Rigid-body contacts and constraints must be resolved with a stable, deterministic solver. Stacking, friction, and restitution require iterative methods.
+
 ## Decision
-Use dependency-free stable Rust reference paths; f32 default with opt-in f64 math; separate native 2D/3D worlds; +Y-up right-handed metres; generational pools and stable IDs; bounded/canonical algorithms; XPBD planned for deformables, PBF planned for fluid; CPU reference before SIMD/GPU; little-endian versioned serialization; isolated C ABI unsafe; sandbox remains downstream.
+- **Sequential Impulse Solver** (planned): Gauss-Seidel style constraint solver with warm starting from manifold cached impulses. Configurable iteration count with penetration stabilization and substep support.
+- **Penetration stabilization**: Baumgarte-style correction with slop threshold.
+- **Constraint types** (planned): Contact (normal + friction), weld/point-to-point limits, distance/spring, motor, and joint limits.
+- **Sleeping**: Bodies below a kinetic energy threshold enter sleep after a stabilization period; island-based wake propagation.
+
 ## Alternatives
-External physics engines are forbidden. Premature GPU-only, nightly SIMD, pointer APIs, and unordered simulation maps were rejected.
+- Direct complementarity solvers (Lemke, PATH): more robust but significantly more complex and harder to make deterministic.
+- XPBD for rigid contacts: possible but adds compliance tuning complexity compared to traditional impulse-based methods.
+- Global LCP solves: not real-time suitable for many contacts.
+
 ## Consequences
-More implementation work, but auditable behavior and portable fallback. This ADR must be specialized with measurements during its owning milestone.
+- Sequential impulses are the industry standard for real-time physics and well-understood for determinism.
+- Penetration stabilization may introduce visible correction; slop threshold keeps small penetrations silent.
+- Iteration count must be configurable to trade speed for accuracy.
+
 ## Validation
-Strict build/tests, differential/property tests, state hashes, allocation/performance measurements, and honest platform matrix.
+- Stacking tower/pyramid remains stable for 60 simulated seconds at 60 Hz (penetration ≤ CONTACT_SLOP).
+- Restitution and friction match analytic predictions within documented tolerance.
+- Deterministic replay: 10,000-step ×3 produces identical state hash (Tier A).

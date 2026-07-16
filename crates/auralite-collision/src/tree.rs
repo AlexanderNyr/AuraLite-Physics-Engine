@@ -1,5 +1,5 @@
 //! Deterministic balanced dynamic AABB trees with fat, velocity-predicted leaves.
-use auralite_math::{Aabb2, Aabb3, Ray2, Ray3, Real, Vec2, Vec3};
+use auralite_math::{ABS_EPSILON, Aabb2, Aabb3, Ray2, Ray3, Real, Vec2, Vec3};
 fn union2(a: Aabb2, b: Aabb2) -> Aabb2 {
     Aabb2::new(
         Vec2 {
@@ -262,6 +262,37 @@ impl DynamicTree2 {
         }
         self.root.map_or(0, |r| h(&self.nodes, r))
     }
+    /// AABB query that also returns candidate IDs and their AABBs for distance evaluation.
+    #[must_use]
+    pub fn query_with_aabbs(&self, a: Aabb2) -> Vec<(u64, Aabb2)> {
+        let ids = self.query(a);
+        ids.into_iter()
+            .filter_map(|id| self.leaves.iter().find(|x| x.0 == id).map(|x| (id, x.1)))
+            .collect()
+    }
+    /// Shape cast: sweep this AABB through `translation` and return potential overlaps at the end position.
+    /// Uses Minkowski sum approach: expand the query AABB by the swept AABB's half-extents.
+    #[must_use]
+    pub fn shape_cast(&self, shape_aabb: Aabb2, translation: Vec2) -> Vec<u64> {
+        if translation.length_squared() <= ABS_EPSILON * ABS_EPSILON {
+            return self.query(shape_aabb);
+        }
+        // Swept AABB = union of start and end AABB
+        let end_aabb = Aabb2::new(shape_aabb.min + translation, shape_aabb.max + translation)
+            .unwrap_or(shape_aabb);
+        let swept = Aabb2::new(
+            Vec2 {
+                x: shape_aabb.min.x.min(end_aabb.min.x),
+                y: shape_aabb.min.y.min(end_aabb.min.y),
+            },
+            Vec2 {
+                x: shape_aabb.max.x.max(end_aabb.max.x),
+                y: shape_aabb.max.y.max(end_aabb.max.y),
+            },
+        )
+        .unwrap_or(shape_aabb);
+        self.query(swept)
+    }
 }
 /// Dynamic 3D AABB tree with the same deterministic policy.
 #[derive(Default, Clone, Debug)]
@@ -421,6 +452,37 @@ impl DynamicTree3 {
         }
         self.root.map_or(0, |r| h(&self.nodes, r))
     }
+    /// AABB query that also returns candidate IDs and their AABBs.
+    #[must_use]
+    pub fn query_with_aabbs(&self, a: Aabb3) -> Vec<(u64, Aabb3)> {
+        let ids = self.query(a);
+        ids.into_iter()
+            .filter_map(|id| self.leaves.iter().find(|x| x.0 == id).map(|x| (id, x.1)))
+            .collect()
+    }
+    /// Shape cast: sweep this AABB through `translation` and return potential overlaps.
+    #[must_use]
+    pub fn shape_cast(&self, shape_aabb: Aabb3, translation: Vec3) -> Vec<u64> {
+        if translation.length_squared() <= ABS_EPSILON * ABS_EPSILON {
+            return self.query(shape_aabb);
+        }
+        let end_aabb = Aabb3::new(shape_aabb.min + translation, shape_aabb.max + translation)
+            .unwrap_or(shape_aabb);
+        let swept = Aabb3::new(
+            Vec3 {
+                x: shape_aabb.min.x.min(end_aabb.min.x),
+                y: shape_aabb.min.y.min(end_aabb.min.y),
+                z: shape_aabb.min.z.min(end_aabb.min.z),
+            },
+            Vec3 {
+                x: shape_aabb.max.x.max(end_aabb.max.x),
+                y: shape_aabb.max.y.max(end_aabb.max.y),
+                z: shape_aabb.max.z.max(end_aabb.max.z),
+            },
+        )
+        .unwrap_or(shape_aabb);
+        self.query(swept)
+    }
 }
 /// Invalid tree configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,5 +546,32 @@ mod tests {
         }
         assert_eq!(x.pairs(), y.pairs());
         assert_eq!(x.query(a), vec![1, 2, 7, 9]);
+    }
+    #[test]
+    fn dynamic_tree_shape_cast_candidates() {
+        let mut t = DynamicTree2::new(0.0, 0.0).unwrap();
+        t.update(
+            1,
+            Aabb2::new(Vec2 { x: 0.0, y: 0.0 }, Vec2 { x: 1.0, y: 1.0 }).unwrap(),
+            Vec2::ZERO,
+        );
+        t.update(
+            2,
+            Aabb2::new(Vec2 { x: 10.0, y: 0.0 }, Vec2 { x: 11.0, y: 1.0 }).unwrap(),
+            Vec2::ZERO,
+        );
+        let shape = Aabb2::new(Vec2::ZERO, Vec2 { x: 1.0, y: 1.0 }).unwrap();
+        // Shape cast from origin to x=10 should find id 2
+        let hits = t.shape_cast(shape, Vec2 { x: 12.0, y: 0.0 });
+        assert!(hits.contains(&2), "shape cast should find target at x=10");
+    }
+    #[test]
+    fn dynamic_tree_query_with_aabbs() {
+        let mut t = DynamicTree2::new(0.1, 0.2).unwrap();
+        let a = Aabb2::new(Vec2::ZERO, Vec2 { x: 1.0, y: 1.0 }).unwrap();
+        t.update(42, a, Vec2::ZERO);
+        let q = t.query_with_aabbs(a);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].0, 42);
     }
 }

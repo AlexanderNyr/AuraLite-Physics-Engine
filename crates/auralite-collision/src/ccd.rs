@@ -1,5 +1,88 @@
 //! Bounded analytic and conservative continuous collision detection.
 use auralite_math::{ABS_EPSILON, Real, Vec2, Vec3};
+
+/// Conservative advancement parameters.
+pub struct CaParams {
+    /// Maximum number of iterations.
+    pub max_iterations: u16,
+    /// Tolerance for separation convergence.
+    pub tolerance: Real,
+}
+
+impl Default for CaParams {
+    fn default() -> Self {
+        Self {
+            max_iterations: 32,
+            tolerance: 1.0e-5,
+        }
+    }
+}
+
+/// Conservative advancement TOI for convex shapes using support functions.
+/// Iteratively shrinks the time interval by advancing along the closest-point direction.
+#[must_use]
+pub fn conservative_advancement_toi(
+    mut support_a: impl FnMut(Vec3) -> Vec3,
+    mut support_b: impl FnMut(Vec3) -> Vec3,
+    velocity_a: Vec3,
+    velocity_b: Vec3,
+    params: CaParams,
+    max_time: Real,
+) -> Option<Toi> {
+    let mut time = 0.0;
+    let residual_vel = velocity_b - velocity_a;
+    let max_speed = residual_vel.length();
+    if max_speed <= ABS_EPSILON {
+        // No relative motion
+        return None;
+    }
+    for iteration in 0..params.max_iterations {
+        let pa = support_a(Vec3::X);
+        let pb = support_b(-Vec3::X);
+        if !pa.is_finite() || !pb.is_finite() {
+            return None;
+        }
+        // Compute closest points using GJK at current time
+        let gjk = super::gjk::gjk_distance3(
+            |d| {
+                let p = support_a(d);
+                p + velocity_a * time
+            },
+            |d| {
+                let p = support_b(-d);
+                p + velocity_b * time
+            },
+            16,
+        );
+        let separation = gjk.distance;
+        let normal = gjk.normal;
+
+        if gjk.status == super::GjkStatus::Intersecting || separation <= params.tolerance {
+            return Some(Toi {
+                time,
+                normal3: normal,
+                iterations: iteration + 1,
+                residual: separation.max(0.0),
+                converged: true,
+            });
+        }
+
+        // Relative velocity along normal
+        let vn = residual_vel.dot(normal);
+        if vn >= -ABS_EPSILON {
+            // Moving apart
+            return None;
+        }
+
+        // Advance time: dt = separation / |vn|
+        let dt = separation / (-vn);
+        time += dt;
+        if time >= max_time {
+            return None;
+        }
+    }
+    None
+}
 /// Time-of-impact diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Toi {

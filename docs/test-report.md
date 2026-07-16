@@ -1,5 +1,9 @@
 # Test report — 2026-07-16
-Environment: Linux x86-64, Rust 1.97.0. Commands `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` passed. 45 unit tests passed, 0 failed; all crate doctest harnesses passed (0 doctests). Coverage includes finite rejection, rotation/cross/matrix inverse/transform composition properties, ray/plane/segment boundaries, degenerate triangles, analytic box/polygon mass, convex support differential checks, transformed bounds, scaling rejection, stale handles, RNG replay, coincident/touching analytic contacts, deterministic broad-phase pairs, falling/resting 2D, 3D snapshot rollback hash, invalid-step atomicity, parser truncation/quota hostility, and FFI lifecycle errors.
+Environment: Linux x86-64, Rust 1.97.0 (2026-07-07). Commands `cargo test --workspace` and `cargo clippy --workspace --all-targets --all-features -- -D warnings` passed. **73 unit tests passed, 0 failed**; all crate doctest harnesses passed (0 doctests). Baseline gates: `cargo fmt --all --check` (clean), `cargo test -p auralite-math --no-default-features --features f64` (11 tests pass), `cargo build --workspace --release` (clean), sandbox + falling example run.
+
+**Test distribution:** 30 auralite-collision, 21 auralite-geometry, 11 auralite-math, 4 auralite-core, 3 auralite-dynamics, 3 auralite-serialize, 1 auralite-ffi.
+
+**New M3 coverage:** 3D OBB-OBB SAT (overlap, separated, touching), 3D EPA basic penetration + separated fallback + degenerate first iteration, Manifold3 feature persistence, 2D contact clipping, manifold from clip, BVH-accelerated ray/closest-point mesh queries (differential vs brute force), dynamic tree shape cast + query with AABBs, robustness battery (deep penetration, mm-scale, km-scale, degenerate/near-zero, plate stacking SAT, EPA degenerate input).
 
 Not run: ASan/LSan/UBSan/TSan (nightly/tooling unavailable), Miri, cargo-fuzz, cargo-audit/cargo-deny (tools not installed; zero external dependencies reduces but does not eliminate toolchain risk), race tests, cross-platform tests. Full mandatory test pyramid is incomplete.
 

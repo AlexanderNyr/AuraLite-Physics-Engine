@@ -1,13 +1,34 @@
-# ADR 14: project decision
-**Status:** accepted for foundation / revisit before dependent milestone.
+# ADR 14: serialization format and strategy
+**Status:** accepted; revisit during M10.
 
 ## Context
-The product requires correctness, deterministic ordering, portability, and measured optimization.
+Simulation state must be serialized for replay, rollback, networking, and debugging. The format must be versioned, hostile-input-hardened, and support round-trip determinism.
+
 ## Decision
-Use dependency-free stable Rust reference paths; f32 default with opt-in f64 math; separate native 2D/3D worlds; +Y-up right-handed metres; generational pools and stable IDs; bounded/canonical algorithms; XPBD planned for deformables, PBF planned for fluid; CPU reference before SIMD/GPU; little-endian versioned serialization; isolated C ABI unsafe; sandbox remains downstream.
+- **Binary format**: Little-endian (native on x86-64, explicit conversion on big-endian). Versioned envelope with magic bytes `AURA`, version u32, payload length u64, followed by a quota-bounded payload.
+- **Typed payloads** (planned): Separate serialization traits for each subsystem:
+  - World state (bodies, handles, timers)
+  - Shape geometry
+  - Joint state
+  - Soft/cloth state
+  - Particle/fluid state
+  - RNG seed and step count
+  - Full snapshots and incremental deltas
+- **Quota bounds**: All decode paths enforce size/iteration limits derived from the envelope length to prevent hostile memory exhaustion.
+- **Deterministic round-trip**: serialize(deserialize(state)) == state (Tier A bitwise).
+- **Rollback API**: Public `save_snapshot()` / `restore(snapshot)` on worlds.
+
 ## Alternatives
-External physics engines are forbidden. Premature GPU-only, nightly SIMD, pointer APIs, and unordered simulation maps were rejected.
+- JSON/TOML: human-readable but inefficient for binary state and harder to bound sizes.
+- FlatBuffers/Cap'n Proto: external schema dependency; adds build complexity.
+- bincode: external dependency; reduces auditability.
+
 ## Consequences
-More implementation work, but auditable behavior and portable fallback. This ADR must be specialized with measurements during its owning milestone.
+- Own binary format requires manual serialization code but maximizes auditability and control.
+- Quota enforcement prevents OOM on hostile input.
+- Versioned envelopes allow forward compatibility.
+
 ## Validation
-Strict build/tests, differential/property tests, state hashes, allocation/performance measurements, and honest platform matrix.
+- Hostile input (truncated, oversized, corrupted) all fail with documented error codes.
+- Round-trip tests for all typed payloads produce bitwise-identical state.
+- Fuzz targets validate parser/hardening (planned).

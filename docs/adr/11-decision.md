@@ -1,13 +1,27 @@
-# ADR 11: project decision
-**Status:** accepted for foundation / revisit before dependent milestone.
+# ADR 11: memory layout and data organization
+**Status:** accepted; revisit during M9.
 
 ## Context
-The product requires correctness, deterministic ordering, portability, and measured optimization.
+Performance-critical subsystems (broad phase, narrow phase, solver, particles, fluids) benefit from cache-friendly data layouts. The engine must balance this with development simplicity.
+
 ## Decision
-Use dependency-free stable Rust reference paths; f32 default with opt-in f64 math; separate native 2D/3D worlds; +Y-up right-handed metres; generational pools and stable IDs; bounded/canonical algorithms; XPBD planned for deformables, PBF planned for fluid; CPU reference before SIMD/GPU; little-endian versioned serialization; isolated C ABI unsafe; sandbox remains downstream.
+- **Bodies**: Stored in `Pool<T>` (generational slot map) for AoS (Array of Structs) access — sufficient for current body counts (hundreds to low thousands).
+- **Particles/fluids**: SoA (Struct of Arrays) layout planned for fluid particles where contiguous position/velocity/weight access matters.
+- **Broad-phase pairs**: Produced as `Vec<(u64, u64)>` on demand; caller filters and processes pairs.
+- **Constraint/contact data**: Stored per-frame in temporary `Vec`s rather than persistent structures.
+- **Memory allocation**: All allocations go through `std::Vec`/`std::collections::VecDeque`; no custom allocators at this stage.
+
 ## Alternatives
-External physics engines are forbidden. Premature GPU-only, nightly SIMD, pointer APIs, and unordered simulation maps were rejected.
+- Full ECS (Entity Component System): would add a heavy dependency and architectural complexity not justified by current scale.
+- Custom slab allocators: premature for current codebase maturity.
+- Persistent contact graph: adds complexity; per-frame temporary arrays are simpler for deterministic ordering.
+
 ## Consequences
-More implementation work, but auditable behavior and portable fallback. This ADR must be specialized with measurements during its owning milestone.
+- AoS for bodies is simple but cache-misses on `Pool` iteration across unrelated fields.
+- SoA for particles will be a measured improvement rather than a speculative design.
+- No custom allocator means allocation-dependent performance may vary.
+- Steady-state allocation budgets should be validated with tests.
+
 ## Validation
-Strict build/tests, differential/property tests, state hashes, allocation/performance measurements, and honest platform matrix.
+- Benchmark comparisons of AoS vs SoA for fluid particle storage (planned M9).
+- Allocation budget tests ensure no unbounded growth in steady-state simulation.

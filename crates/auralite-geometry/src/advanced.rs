@@ -698,6 +698,148 @@ impl TriangleMesh {
             self.indices.clone(),
         )
     }
+    /// BVH-accelerated ray hit query. Returns the closest triangle hit distance.
+    #[must_use]
+    pub fn ray_t_bvh(&self, r: Ray3) -> Option<Real> {
+        self._ray_bvh_recursive(r, self.root, Real::INFINITY)
+    }
+    #[allow(clippy::collapsible_if)]
+    fn _ray_bvh_recursive(&self, r: Ray3, node_idx: usize, mut best: Real) -> Option<Real> {
+        let node = &self.nodes[node_idx];
+        // Check if ray hits this node's bounds
+        let (lo, _hi) = ray_aabb3_interval(r, node.bounds)?;
+        if lo > best {
+            return None;
+        }
+        match node.children {
+            Some((left_child, right_child)) => {
+                let left = self._ray_bvh_recursive(r, left_child, best);
+                if let Some(t) = left {
+                    best = best.min(t);
+                }
+                let right = self._ray_bvh_recursive(r, right_child, best);
+                right.or(left)
+            }
+            None => {
+                // Leaf node: check triangles
+                let mut closest: Option<Real> = None;
+                for &ti in &node.triangles {
+                    let tri_idx = self.indices[ti];
+                    if let Ok(tri) = Triangle3::new(
+                        self.vertices[tri_idx[0] as usize],
+                        self.vertices[tri_idx[1] as usize],
+                        self.vertices[tri_idx[2] as usize],
+                    ) {
+                        if let Some((t, _)) = tri.ray_intersection(r) {
+                            if t <= best {
+                                best = t;
+                                closest = Some(t);
+                            }
+                        }
+                    }
+                }
+                closest
+            }
+        }
+    }
+    /// BVH-accelerated closest point query.
+    #[must_use]
+    pub fn closest_point_bvh(&self, p: Vec3) -> Vec3 {
+        let mut best_dist = Real::INFINITY;
+        let mut best_pt = p;
+        self._closest_bvh_recursive(p, self.root, &mut best_dist, &mut best_pt);
+        best_pt
+    }
+    fn _closest_bvh_recursive(
+        &self,
+        p: Vec3,
+        node_idx: usize,
+        best_dist: &mut Real,
+        best_pt: &mut Vec3,
+    ) {
+        let node = &self.nodes[node_idx];
+        // Early exit if the node bounds are farther than current best
+        let d_bound = closest_point_aabb3(p, node.bounds);
+        if d_bound >= *best_dist {
+            return;
+        }
+        match node.children {
+            Some((left_child, right_child)) => {
+                // Process closer child first
+                let dl = closest_point_aabb3(p, self.nodes[left_child].bounds);
+                let dr = closest_point_aabb3(p, self.nodes[right_child].bounds);
+                if dl <= dr {
+                    self._closest_bvh_recursive(p, left_child, best_dist, best_pt);
+                    self._closest_bvh_recursive(p, right_child, best_dist, best_pt);
+                } else {
+                    self._closest_bvh_recursive(p, right_child, best_dist, best_pt);
+                    self._closest_bvh_recursive(p, left_child, best_dist, best_pt);
+                }
+            }
+            None => {
+                for &ti in &node.triangles {
+                    let tri_idx = self.indices[ti];
+                    if let Ok(tri) = Triangle3::new(
+                        self.vertices[tri_idx[0] as usize],
+                        self.vertices[tri_idx[1] as usize],
+                        self.vertices[tri_idx[2] as usize],
+                    ) {
+                        let pt = tri.closest_point(p);
+                        let d = (pt - p).length_squared();
+                        if d < *best_dist {
+                            *best_dist = d;
+                            *best_pt = pt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Returns the squared distance from point p to the AABB.
+fn closest_point_aabb3(p: Vec3, a: Aabb3) -> Real {
+    let c = (a.min + a.max) * 0.5;
+    let h = (a.max - a.min) * 0.5;
+    let d = Vec3 {
+        x: (p.x - c.x).abs() - h.x,
+        y: (p.y - c.y).abs() - h.y,
+        z: (p.z - c.z).abs() - h.z,
+    };
+    let d2 = Vec3 {
+        x: if d.x > 0.0 { d.x } else { 0.0 },
+        y: if d.y > 0.0 { d.y } else { 0.0 },
+        z: if d.z > 0.0 { d.z } else { 0.0 },
+    };
+    d2.length_squared()
+}
+/// Returns the intersection interval of a ray with an AABB.
+fn ray_aabb3_interval(r: Ray3, a: Aabb3) -> Option<(Real, Real)> {
+    let mut lo = 0.0f32 as Real;
+    let mut hi = Real::INFINITY;
+    for (o, d, mn, mx) in [
+        (r.origin.x, r.direction.x, a.min.x, a.max.x),
+        (r.origin.y, r.direction.y, a.min.y, a.max.y),
+        (r.origin.z, r.direction.z, a.min.z, a.max.z),
+    ] {
+        if d.abs() < 1.0e-8 {
+            if o < mn || o > mx {
+                return None;
+            }
+        } else {
+            let mut a = (mn - o) / d;
+            let mut b = (mx - o) / d;
+            if a > b {
+                core::mem::swap(&mut a, &mut b);
+            }
+            lo = lo.max(a);
+            hi = hi.min(b);
+            if lo > hi {
+                return None;
+            }
+        }
+    }
+    Some((lo, hi))
 }
 
 /// A 2D heightfield chain sampled at uniform x spacing.
@@ -1524,6 +1666,64 @@ mod tests {
                 "seed={seed:#x}"
             );
         }
+    }
+    #[test]
+    fn mesh_bvh_ray_and_closest_agree_with_bruteforce() {
+        // Build a larger mesh and verify BVH-accelerated queries match brute force
+        let mut v = Vec::new();
+        for x in 0..5 {
+            for z in 0..5 {
+                let y = ((x as Real).sin() * (z as Real).cos() * 0.5).max(0.0);
+                v.push(Vec3 {
+                    x: x as Real,
+                    y,
+                    z: z as Real,
+                });
+            }
+        }
+        let mut indices = Vec::new();
+        for r in 0..4 {
+            for c in 0..4 {
+                let a = (r * 5 + c) as u32;
+                let b = a + 1;
+                let d = ((r + 1) * 5 + c) as u32;
+                let e = d + 1;
+                indices.push([a, d, b]);
+                indices.push([b, d, e]);
+            }
+        }
+        let m = TriangleMesh::new(v, indices).unwrap();
+        // Test BVH ray against brute force
+        let ray = Ray3::new(
+            Vec3 {
+                x: 2.5,
+                y: 5.0,
+                z: 2.5,
+            },
+            Vec3 {
+                x: 0.0,
+                y: -1.0,
+                z: 0.0,
+            },
+        )
+        .unwrap();
+        let bvh_hit = m.ray_t_bvh(ray);
+        let brute_hit = m.ray_t(ray);
+        assert_eq!(bvh_hit, brute_hit, "BVH ray should match brute force");
+
+        // Test BVH closest point against brute force
+        let pt = Vec3 {
+            x: 2.5,
+            y: 5.0,
+            z: 2.5,
+        };
+        let bvh_closest = m.closest_point_bvh(pt);
+        let brute_closest = m.closest_point(pt);
+        let diff = (bvh_closest - brute_closest).length();
+        assert!(
+            diff < 1.0e-6,
+            "BVH closest should match brute force, diff={diff}"
+        );
     }
     #[test]
     fn hull_cube_mass_regression() {

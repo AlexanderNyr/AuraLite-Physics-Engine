@@ -1,13 +1,30 @@
-# ADR 12: project decision
-**Status:** accepted for foundation / revisit before dependent milestone.
+# ADR 12: scheduling and determinism architecture
+**Status:** accepted; revisit during M9.
 
 ## Context
-The product requires correctness, deterministic ordering, portability, and measured optimization.
+Multi-threaded execution must preserve bitwise-identical deterministic results compared to the single-threaded execution path.
+
 ## Decision
-Use dependency-free stable Rust reference paths; f32 default with opt-in f64 math; separate native 2D/3D worlds; +Y-up right-handed metres; generational pools and stable IDs; bounded/canonical algorithms; XPBD planned for deformables, PBF planned for fluid; CPU reference before SIMD/GPU; little-endian versioned serialization; isolated C ABI unsafe; sandbox remains downstream.
+- **Job abstraction**: The engine exposes a `Scheduler` trait with `run_batch(jobs)` allowing the caller to inject their own scheduler (e.g. rayon, thread-pool, single-thread).
+- **Default scheduler**: A built-in `SingleThreadScheduler` that runs jobs sequentially. All results from this scheduler must be bitwise-identical to deterministic multi-threaded results.
+- **Parallelization strategy** (planned):
+  - Broad phase: parallel tree traversal/query.
+  - Narrow phase: parallel pair dispatch.
+  - Solver: parallel constraint preparation with deterministic reduction.
+  - Soft-body/fluid: parallel constraint solves.
+- **Deterministic reductions**: Parallel work products (impulses, forces) use commutative associative accumulation to ensure order-independence.
+
 ## Alternatives
-External physics engines are forbidden. Premature GPU-only, nightly SIMD, pointer APIs, and unordered simulation maps were rejected.
+- Rayon as mandatory dependency: rejected because users may need custom thread-pooling or embedded single-thread mode.
+- Shared-state locks: rejected for performance and determinism concerns.
+- Work-stealing without determinism guarantee: rejected because Tier A determinism is a hard requirement.
+
 ## Consequences
-More implementation work, but auditable behavior and portable fallback. This ADR must be specialized with measurements during its owning milestone.
+- Single-thread mode serves as reference for deterministic MT results.
+- External scheduler integration requires callback-based API.
+- Reduction determinism limits some parallel patterns (e.g. atomic increment for accumulation).
+
 ## Validation
-Strict build/tests, differential/property tests, state hashes, allocation/performance measurements, and honest platform matrix.
+- `single-thread` mode hash == deterministic MT mode hash (Tier A).
+- Parallel vs sequential speedup measured at 1/2/4/8 threads.
+- No race conditions detected by TSan (where available).
