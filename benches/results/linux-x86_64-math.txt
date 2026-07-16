@@ -1,0 +1,7 @@
+iterations=5000000 elapsed_ns=46576063 ns_per_transform=9.315 checksum=Vec2 { x: 4.257702, y: 2.9805298 }
+iterations=5000000 elapsed_ns=45449114 ns_per_transform=9.090 checksum=Vec2 { x: 4.257702, y: 2.9805298 }
+iterations=5000000 elapsed_ns=46535777 ns_per_transform=9.307 checksum=Vec2 { x: 4.257702, y: 2.9805298 }
+iterations=5000000 elapsed_ns=45682498 ns_per_transform=9.136 checksum=Vec2 { x: 4.257702, y: 2.9805298 }
+iterations=5000000 elapsed_ns=46777364 ns_per_transform=9.355 checksum=Vec2 { x: 4.257702, y: 2.9805298 }
+iterations=5000000 elapsed_ns=48250155 ns_per_transform=9.650 checksum=Vec2 { x: 4.257702, y: 2.9805298 }
+iterations=5000000 elapsed_ns=45826763 ns_per_transform=9.165 checksum=Vec2 { x: 4.257702, y: 2.9805298 }

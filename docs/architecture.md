@@ -1,0 +1,2 @@
+# Architecture
+Dependency direction: `math` + `core` → `geometry` and `collision` → `dynamics` → `{serialize, ffi, sandbox}`. Physics never depends on the sandbox. `World2`/`BodyHandle2` and `World3`/`BodyHandle3` are distinct native types. Pure crates forbid unsafe; the FFI crate isolates and inventories it. Current broad phase uses deterministic stable-ID ordered brute-force pairs as a correctness reference, not the required production dynamic tree.

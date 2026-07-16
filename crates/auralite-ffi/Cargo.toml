@@ -1,0 +1,12 @@
+[package]
+name = "auralite-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+[dependencies]
+auralite-dynamics = { path = "../auralite-dynamics" }
+[lints]
+workspace = true

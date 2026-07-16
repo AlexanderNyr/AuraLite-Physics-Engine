@@ -1,0 +1,7 @@
+support_n=2000000 support_ns=41280565 ns_per_support=20.640 triangles=7938 bvh_nodes=4095 bvh_build_ns=19644366 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }
+support_n=2000000 support_ns=29262045 ns_per_support=14.631 triangles=7938 bvh_nodes=4095 bvh_build_ns=16453891 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }
+support_n=2000000 support_ns=37093264 ns_per_support=18.547 triangles=7938 bvh_nodes=4095 bvh_build_ns=27151585 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }
+support_n=2000000 support_ns=29120821 ns_per_support=14.560 triangles=7938 bvh_nodes=4095 bvh_build_ns=16379159 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }
+support_n=2000000 support_ns=48270782 ns_per_support=24.135 triangles=7938 bvh_nodes=4095 bvh_build_ns=21432795 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }
+support_n=2000000 support_ns=28763348 ns_per_support=14.382 triangles=7938 bvh_nodes=4095 bvh_build_ns=16341810 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }
+support_n=2000000 support_ns=29898865 ns_per_support=14.949 triangles=7938 bvh_nodes=4095 bvh_build_ns=17713749 checksum=Vec3 { x: 4162.0, y: 8324.0, z: 6516.0 }

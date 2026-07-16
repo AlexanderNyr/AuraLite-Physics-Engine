@@ -1,0 +1,5 @@
+bodies=1000 steps=1000 elapsed_ns=39638463 ns_per_body_step=39.638 hash=19de7b8ce4aee464
+bodies=1000 steps=1000 elapsed_ns=37572939 ns_per_body_step=37.573 hash=19de7b8ce4aee464
+bodies=1000 steps=1000 elapsed_ns=38503716 ns_per_body_step=38.504 hash=19de7b8ce4aee464
+bodies=1000 steps=1000 elapsed_ns=39728958 ns_per_body_step=39.729 hash=19de7b8ce4aee464
+bodies=1000 steps=1000 elapsed_ns=39108818 ns_per_body_step=39.109 hash=19de7b8ce4aee464

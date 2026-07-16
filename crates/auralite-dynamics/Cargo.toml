@@ -1,0 +1,19 @@
+[package]
+name = "auralite-dynamics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[features]
+default = ["multithread"]
+multithread = []
+single-thread = []
+[dependencies]
+auralite-math = { path = "../auralite-math" }
+auralite-core = { path = "../auralite-core" }
+auralite-collision = { path = "../auralite-collision" }
+[lints]
+workspace = true
+[[example]]
+name = "falling"
+path = "examples/falling.rs"

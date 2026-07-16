@@ -1,0 +1,2 @@
+# Numerical conventions
+Right-handed coordinates, +Y up; metres, kilograms, seconds, radians. Recommended f32 scale: features 0.01–100 m and coordinates within roughly ±10 km; rebase larger worlds. Public constructors reject non-finite values. Normalization uses `ABS_EPSILON=1e-6` and an explicit caller fallback. Contact slop is 0.005 m. No fast-math is enabled. Same-build/platform replay is the only current tested determinism scope.

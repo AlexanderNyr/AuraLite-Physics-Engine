@@ -1,0 +1,2 @@
+# Platform builds
+Linux verified: `cargo test --workspace`. Windows/macOS use the same commands in CI. Typical targets: `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `aarch64-linux-android`, `aarch64-apple-ios`, `aarch64-apple-ios-sim`. Install targets with rustup, plus the native SDK/linker. Android requires `ANDROID_NDK_HOME` and NDK clang; iOS requires macOS/Xcode and uses `cargo build --release --target ...` before `xcodebuild -create-xcframework`. These paths are not verified in this environment.

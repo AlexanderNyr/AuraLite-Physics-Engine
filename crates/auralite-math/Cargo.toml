@@ -1,0 +1,12 @@
+[package]
+name = "auralite-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+[features]
+default = ["f32"]
+f32 = []
+f64 = []
+[lints]
+workspace = true

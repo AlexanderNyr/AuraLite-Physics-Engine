@@ -1,0 +1,2 @@
+# Testing and tolerance conventions
+Randomized tests use fixed, printed-on-failure seeds and self-owned xorshift64* generation. Exact integer/identity results use equality. Normal-scale f32 vector identities use `REL_EPSILON` multiplied by a documented operation-count factor; transform round trips use `2e-4*(1+|p|)` after two rotations/translations. Geometry degeneracy uses `ABS_EPSILON + REL_EPSILON * input-scale-product`. Tested foundational scales span 1 mm to 1 km. Tolerances are derived from operation count and scale and must not be increased without defect analysis.
