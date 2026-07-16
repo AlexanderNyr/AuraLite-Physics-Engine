@@ -77,3 +77,14 @@ dependencies = [
  "auralite-geometry",
  "auralite-math",
 ]
+
+[[package]]
+name = "auralite-vehicles"
+version = "0.1.0"
+dependencies = [
+ "auralite-collision",
+ "auralite-core",
+ "auralite-dynamics",
+ "auralite-geometry",
+ "auralite-math",
+]
