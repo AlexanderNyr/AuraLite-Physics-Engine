@@ -4,7 +4,7 @@ Status: **2 complete and 5 partial Section-5 areas**; M3 active.
 |---|---|---|---|
 | 5.1 math/core | `auralite-math`, `auralite-core` | 9 math/core unit tests including inverse/transform/primitives | **Complete at M1**: full foundational catalog, predicates, mass foundations, finite/time/identity policy, seeded/extreme suites, f32/f64 evidence |
 | 5.2 shapes | `auralite-geometry::{lib,advanced}` full native catalog, hulls, compounds, mesh/BVH, heightfields | 20 geometry tests including 10k-direction support differential, analytic mass, hull/mesh regressions | **Complete at M2**; undefined infinite/static mass and numerical accuracy documented |
-| 5.3 collision/queries | analytic circle/sphere, `BroadPhase2/3` | touching/coincident/pair-order tests | Partial reference; mandatory algorithms missing |
+| 5.3 collision/queries | analytic circle/sphere, `BroadPhase2/3` | touching/coincident/pair-order tests | Partial: dynamic trees/filtering/analytic TOI added with 100,128-check differential; convex/manifold/query algorithms remain |
 | 5.4 rigid dynamics | `World2`, `World3` | falling/rest, invalid dt | Partial vertical slice only |
 | 5.5 joints | none | none | Not started |
 | 5.6 soft/cloth | none | none | Not started |

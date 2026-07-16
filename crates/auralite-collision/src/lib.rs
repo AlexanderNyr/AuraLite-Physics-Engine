@@ -184,3 +184,17 @@ mod tests {
         assert_eq!(b.pairs(), vec![(2, 5), (2, 9), (5, 9)]);
     }
 }
+
+pub mod tree;
+pub use tree::*;
+
+pub mod ccd;
+pub mod filter;
+pub use ccd::*;
+pub use filter::*;
+
+pub mod gjk;
+pub use gjk::*;
+
+pub mod narrow;
+pub use narrow::*;
