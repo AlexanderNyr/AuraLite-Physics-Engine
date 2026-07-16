@@ -1134,6 +1134,8 @@ pub fn rectangle_mass_properties(half: Vec2, density: Real) -> Option<(Real, Rea
         None
     }
 }
+pub mod simd;
+
 /// Analytic mass and diagonal inertia for a solid axis-aligned cuboid.
 #[must_use]
 pub fn cuboid_mass_properties(half: Vec3, density: Real) -> Option<(Real, Vec3)> {

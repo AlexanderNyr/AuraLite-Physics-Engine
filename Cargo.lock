@@ -38,6 +38,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auralite-gpu"
+version = "0.1.0"
+dependencies = [
+ "auralite-collision",
+ "auralite-core",
+ "auralite-dynamics",
+ "auralite-math",
+]
+
+[[package]]
 name = "auralite-math"
 version = "0.1.0"
 

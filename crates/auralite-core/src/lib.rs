@@ -1,4 +1,5 @@
-//! Stable IDs, generational storage, deterministic RNG and hashing.
+//! Stable IDs, generational storage, deterministic RNG, hashing,
+//! fixed-step accumulator, and job scheduler abstraction.
 #![forbid(unsafe_code)]
 
 /// Stable, monotonically assigned identity within a world.
@@ -249,6 +250,41 @@ impl FixedAccumulator {
     pub fn alpha(self, config: StepConfig) -> f64 {
         self.remainder / config.dt
     }
+}
+
+/// A unit of parallel work.
+#[derive(Clone, Debug)]
+pub struct Job {
+    /// Unique job index within a batch.
+    pub id: u32,
+    /// Work function. Takes (job_id, total_jobs, user_data).
+    pub work: fn(u32, u32, &mut [u8]),
+}
+
+/// Abstract scheduler trait for parallel execution.
+pub trait Scheduler {
+    /// Run a batch of jobs. All jobs must complete before the call returns.
+    fn run_batch(&mut self, jobs: &mut [Job], user_data: &mut [u8]);
+}
+
+/// Single-threaded scheduler that runs jobs sequentially.
+#[derive(Default)]
+pub struct SingleThreadScheduler;
+
+impl Scheduler for SingleThreadScheduler {
+    fn run_batch(&mut self, jobs: &mut [Job], user_data: &mut [u8]) {
+        let total = jobs.len() as u32;
+        for job in jobs {
+            (job.work)(job.id, total, user_data);
+        }
+    }
+}
+
+/// No-op scheduler for testing or disabled parallelism.
+pub struct NoopScheduler;
+
+impl Scheduler for NoopScheduler {
+    fn run_batch(&mut self, _jobs: &mut [Job], _user_data: &mut [u8]) {}
 }
 
 #[cfg(test)]

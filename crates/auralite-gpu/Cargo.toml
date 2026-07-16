@@ -1,0 +1,20 @@
+[package]
+name = "auralite-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+gpu = []  # Enable GPU compute path
+cpu-fallback = []  # Force CPU fallback even on GPU-capable systems
+
+[dependencies]
+auralite-math = { path = "../auralite-math" }
+auralite-core = { path = "../auralite-core" }
+auralite-dynamics = { path = "../auralite-dynamics" }
+auralite-collision = { path = "../auralite-collision" }
+
+[lints]
+workspace = true
