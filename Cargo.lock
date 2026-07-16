@@ -55,3 +55,14 @@ version = "0.1.0"
 dependencies = [
  "auralite-dynamics",
 ]
+
+[[package]]
+name = "auralite-softbody"
+version = "0.1.0"
+dependencies = [
+ "auralite-collision",
+ "auralite-core",
+ "auralite-dynamics",
+ "auralite-geometry",
+ "auralite-math",
+]

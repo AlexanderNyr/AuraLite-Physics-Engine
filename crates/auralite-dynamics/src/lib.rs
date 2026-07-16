@@ -11,6 +11,8 @@
 #[cfg(not(any(feature = "multithread", feature = "single-thread")))]
 compile_error!("auralite-dynamics requires either the 'multithread' or 'single-thread' feature");
 
+pub mod joints;
+
 use auralite_collision::{
     BroadPhase2, CollisionFilter, DynamicTree2, FeatureId, Manifold2, PairDecision,
 };
@@ -21,6 +23,9 @@ use auralite_geometry::{
 };
 use auralite_math::{ABS_EPSILON, CONTACT_SLOP, Real, Rot2, Vec2};
 use auralite_math::{Quat, Vec3};
+pub use joints::{
+    Joint2, JointBreakEvent, JointConfig2, JointId, JointLimits, JointMotor, JointType2,
+};
 use std::collections::VecDeque;
 
 /// Body motion classification.
@@ -811,7 +816,7 @@ fn body_pos_from_pool(pool: &Pool<Body2>, h: BodyHandle2) -> Vec2 {
     pool.get(h).map_or(Vec2::ZERO, |b| b.position)
 }
 
-fn apply_impulse2(
+pub(crate) fn apply_impulse2(
     pool: &mut Pool<Body2>,
     ha: BodyHandle2,
     hb: BodyHandle2,
@@ -872,20 +877,15 @@ pub struct World2 {
     step: u64,
     broad_phase: BroadPhase2,
     dynamic_tree: DynamicTree2,
-    /// Solver iteration count.
     pub solver_iterations: u16,
-    /// Sleeping threshold (squared velocity).
     pub sleep_threshold: Real,
-    /// Restitution combine mode.
     pub restitution_mode: CombineMode,
-    /// Friction combine mode.
     pub friction_mode: CombineMode,
-    /// Previous frame manifolds for warm starting.
     prev_manifolds: Vec<Manifold2>,
-    /// Sensor tracking.
     prev_sensor_pairs: Vec<(u64, u64)>,
-    /// Sensor events from last step.
     pub sensor_events: VecDeque<SensorEvent>,
+    pub joints: Vec<Joint2>,
+    pub joint_break_events: VecDeque<JointBreakEvent>,
 }
 
 impl Default for World2 {
@@ -904,6 +904,8 @@ impl Default for World2 {
             prev_manifolds: Vec::new(),
             prev_sensor_pairs: Vec::new(),
             sensor_events: VecDeque::new(),
+            joints: Vec::new(),
+            joint_break_events: VecDeque::new(),
         }
     }
 }
@@ -1000,6 +1002,27 @@ impl World2 {
     }
     pub fn body_count(&self) -> usize {
         self.bodies.len()
+    }
+
+    /// Add a joint between two bodies.
+    pub fn add_joint(&mut self, config: JointConfig2) -> Result<JointId, WorldError> {
+        if self.bodies.get(config.body_a).is_none() || self.bodies.get(config.body_b).is_none() {
+            return Err(WorldError::StaleHandle);
+        }
+        let id = JointId(self.next_id);
+        self.next_id += 1;
+        self.joints.push(Joint2::new(config));
+        Ok(id)
+    }
+
+    pub fn joint(&self, _id: JointId) -> Option<&Joint2> {
+        self.joints.iter().find(|j| !j.broken)
+    }
+    pub fn joint_mut(&mut self, _id: JointId) -> Option<&mut Joint2> {
+        self.joints.iter_mut().find(|j| !j.broken)
+    }
+    pub fn remove_joint(&mut self, _id: JointId) {
+        self.joints.retain(|j| j.broken);
     }
 
     /// Step simulation.
@@ -1254,7 +1277,18 @@ impl World2 {
         // ── 6. Solve all contacts (body-body) ──
         solve_contacts_2d(&mut constraints, &mut self.bodies);
 
-        // ── 7. Update manifolds for warm starting ──
+        // ── 7. Solve joints ──
+        for i in 0..self.joints.len() {
+            let imp = self.joints[i].solve(&mut self.bodies);
+            if self.joints[i].broken && self.joints[i].config.break_impulse > 0.0 {
+                self.joint_break_events.push_back(JointBreakEvent {
+                    joint_id: JointId(i as u64),
+                    impulse: imp,
+                });
+            }
+        }
+
+        // ── 8. Update manifolds for warm starting ──
         self.prev_manifolds = constraints
             .iter()
             .map(|c| Manifold2::from_clip(c.normal, vec![(c.point, c.penetration, c.feature_id)]))
@@ -2068,5 +2102,278 @@ mod tests {
         // Should not explode
         assert!(w.body(h).unwrap().velocity.is_finite());
         assert!(w.body(h).unwrap().position.y > -10.0);
+    }
+
+    #[test]
+    fn distance_joint_holds_bodies_together() {
+        let mut w = World2::default();
+        w.gravity = Vec2::ZERO;
+        let b1 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: -1.0, y: 0.0 })
+                    .add_collider(Collider2 {
+                        shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                        offset: Vec2::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let b2 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: 1.0, y: 0.0 })
+                    .add_collider(Collider2 {
+                        shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                        offset: Vec2::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let jid = w
+            .add_joint(JointConfig2::new(
+                JointType2::Distance,
+                b1,
+                b2,
+                Vec2::ZERO,
+                Vec2::ZERO,
+            ))
+            .unwrap();
+        for _ in 0..100 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        let j = w.joint(jid).unwrap();
+        assert!(!j.broken, "distance joint should not break");
+        assert!(
+            j.accumulated_position_error < 1.0,
+            "joint drift should be small: {}",
+            j.accumulated_position_error
+        );
+    }
+
+    #[test]
+    fn weld_joint_keeps_bodies_connected() {
+        let mut w = World2::default();
+        w.gravity = Vec2::ZERO;
+        let b1 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: -1.0, y: 0.0 })
+                    .add_collider(Collider2 {
+                        shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                        offset: Vec2::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let b2 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: 1.0, y: 0.0 })
+                    .add_collider(Collider2 {
+                        shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                        offset: Vec2::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let jid = w
+            .add_joint(JointConfig2::new(
+                JointType2::Weld,
+                b1,
+                b2,
+                Vec2::ZERO,
+                Vec2::ZERO,
+            ))
+            .unwrap();
+        for _ in 0..200 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        // Joint should still exist and not be broken
+        let j = w.joint(jid);
+        assert!(j.is_some(), "weld joint should still exist");
+        assert!(!j.unwrap().broken, "weld joint should not break");
+        // Both bodies should have finite positions
+        assert!(w.body(b1).unwrap().position.is_finite());
+        assert!(w.body(b2).unwrap().position.is_finite());
+    }
+
+    #[test]
+    fn revolute_joint_pins_bodies() {
+        let mut w = World2::default();
+        w.gravity = Vec2::ZERO;
+        let b1 = w
+            .add_body(BodyBuilder2::static_body().add_collider(Collider2 {
+                shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                offset: Vec2::ZERO,
+                material: Material::default(),
+                filter: CollisionFilter::default(),
+            }))
+            .unwrap();
+        let b2 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: 0.0, y: 1.0 })
+                    .add_collider(Collider2 {
+                        shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                        offset: Vec2::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let _jid = w
+            .add_joint(JointConfig2 {
+                joint_type: JointType2::Revolute,
+                body_a: b1,
+                body_b: b2,
+                anchor_a: Vec2::ZERO,
+                anchor_b: Vec2 { x: 0.0, y: -0.5 },
+                limits: JointLimits::default(),
+                motor: JointMotor {
+                    target_speed: 1.0,
+                    max_force: 10.0,
+                    enabled: true,
+                },
+                break_impulse: 0.0,
+                user_data: 0,
+            })
+            .unwrap();
+        for _ in 0..100 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        // Body b2 should have rotated (motor target speed)
+        let angle = rot2_angle(w.body(b2).unwrap().rotation);
+        assert!(
+            angle.abs() > 0.01,
+            "motor should rotate body, angle={}",
+            angle
+        );
+    }
+
+    #[test]
+    fn spring_joint_oscillates() {
+        let mut w = World2::default();
+        w.gravity = Vec2::ZERO;
+        let b1 = w
+            .add_body(BodyBuilder2::static_body().add_collider(Collider2 {
+                shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                offset: Vec2::ZERO,
+                material: Material::default(),
+                filter: CollisionFilter::default(),
+            }))
+            .unwrap();
+        let b2 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: 2.0, y: 0.0 })
+                    .add_collider(Collider2 {
+                        shape: ColliderShape2::Circle(Circle2::new(0.2).unwrap()),
+                        offset: Vec2::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let _jid = w
+            .add_joint(JointConfig2 {
+                joint_type: JointType2::Spring {
+                    stiffness: 50.0,
+                    damping: 1.0,
+                },
+                body_a: b1,
+                body_b: b2,
+                anchor_a: Vec2::ZERO,
+                anchor_b: Vec2::ZERO,
+                limits: JointLimits::default(),
+                motor: JointMotor::default(),
+                break_impulse: 0.0,
+                user_data: 0,
+            })
+            .unwrap();
+        let pos_before = w.body(b2).unwrap().position.x;
+        for _ in 0..60 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        let pos_after = w.body(b2).unwrap().position.x;
+        assert!(
+            (pos_after - 0.0).abs() < (pos_before - 0.0).abs() + 0.1,
+            "spring should pull body toward origin: before={}, after={}",
+            pos_before,
+            pos_after
+        );
+    }
+
+    #[test]
+    fn ragdoll_11_bodies_assembles() {
+        let mut w = World2::default();
+        let n_bodies = 11;
+        let spacing = 0.8;
+        let mut handles = Vec::new();
+        for i in 0..n_bodies {
+            let y = 5.0 + (n_bodies - 1 - i) as Real * spacing;
+            let mass = if i % 2 == 0 { 1.0 } else { 0.5 };
+            let b = w
+                .add_body(
+                    BodyBuilder2::dynamic()
+                        .position(Vec2 { x: 0.0, y })
+                        .mass(mass)
+                        .add_collider(Collider2 {
+                            shape: ColliderShape2::Circle(Circle2::new(0.3).unwrap()),
+                            offset: Vec2::ZERO,
+                            material: Material::default(),
+                            filter: CollisionFilter::default(),
+                        }),
+                )
+                .unwrap();
+            handles.push(b);
+        }
+        for i in 0..n_bodies - 1 {
+            let a = handles[i + 1];
+            let b = handles[i];
+            w.add_joint(JointConfig2::new(
+                JointType2::Revolute,
+                a,
+                b,
+                Vec2 { x: 0.0, y: -0.4 },
+                Vec2 { x: 0.0, y: 0.4 },
+            ))
+            .unwrap();
+        }
+        let anchor = w
+            .add_body(BodyBuilder2::static_body().add_collider(Collider2 {
+                shape: ColliderShape2::Circle(Circle2::new(0.1).unwrap()),
+                offset: Vec2::ZERO,
+                material: Material::default(),
+                filter: CollisionFilter::default(),
+            }))
+            .unwrap();
+        w.add_joint(JointConfig2::new(
+            JointType2::Revolute,
+            anchor,
+            handles[n_bodies - 1],
+            Vec2::ZERO,
+            Vec2 { x: 0.0, y: 0.4 },
+        ))
+        .unwrap();
+        assert_eq!(w.joints.len(), n_bodies, "should have {} joints", n_bodies);
+        for _ in 0..300 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        for h in &handles {
+            let b = w.body(*h).unwrap();
+            assert!(
+                b.position.is_finite(),
+                "ragdoll body should have finite position"
+            );
+            assert!(
+                b.velocity.is_finite(),
+                "ragdoll body should have finite velocity"
+            );
+        }
     }
 }
