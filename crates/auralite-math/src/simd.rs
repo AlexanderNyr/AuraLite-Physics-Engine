@@ -1,5 +1,4 @@
 //! Internal SIMD abstraction layer for vector math.
-#![allow(missing_docs)]
 
 use crate::{Real, Vec2, Vec3};
 

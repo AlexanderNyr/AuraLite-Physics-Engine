@@ -1,7 +1,8 @@
 //! C ABI for AuraLite Physics Engine.
 //! Generation-safe opaque tokens, thread-local last-error, panic containment.
 #![allow(unsafe_code)]
-#![allow(missing_docs, clippy::missing_safety_doc)]
+//! C ABI for AuraLite Physics Engine.
+//! Generation-safe opaque tokens, thread-local last-error, panic containment.
 
 use auralite_dynamics::{World2, World3};
 use std::cell::RefCell;
@@ -53,16 +54,27 @@ fn boundary<F: FnOnce() -> Result<i32, String>>(f: F) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+/// auralite_api_version — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_api_version() -> u32 {
     (1u32 << 16) | 1
 }
 #[unsafe(no_mangle)]
+/// auralite_abi_version — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_abi_version() -> u32 {
     1
 }
 
 /// Creates a 2D world.
 #[unsafe(no_mangle)]
+///
+/// # Safety
+/// Caller must ensure `out` and other pointers are valid, non-null, and writable as documented. Null checks return error codes. Token must be valid.
 pub unsafe extern "C" fn auralite_world2_create(out: *mut u64) -> i32 {
     boundary(|| {
         if out.is_null() {
@@ -93,6 +105,9 @@ pub unsafe extern "C" fn auralite_world2_create(out: *mut u64) -> i32 {
 
 /// Creates a 3D world.
 #[unsafe(no_mangle)]
+///
+/// # Safety
+/// Caller must ensure `out` and other pointers are valid, non-null, and writable as documented. Null checks return error codes. Token must be valid.
 pub unsafe extern "C" fn auralite_world3_create(out: *mut u64) -> i32 {
     boundary(|| {
         if out.is_null() {
@@ -148,12 +163,22 @@ fn with_world3<F: FnOnce(&mut World3) -> Result<i32, String>>(token: u64, f: F) 
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world2_step — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
+/// `dt` must be finite positive. Token must be valid and not stale; otherwise error code returned.
 pub extern "C" fn auralite_world2_step(token: u64, dt: f32) -> i32 {
     with_world2(token, |w| {
         w.step(dt).map(|_| 0).map_err(|e| format!("{:?}", e))
     })
 }
 #[unsafe(no_mangle)]
+/// auralite_world3_step — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
+/// `dt` must be finite positive. Token must be valid and not stale; otherwise error code returned.
 pub extern "C" fn auralite_world3_step(token: u64, dt: f32) -> i32 {
     with_world3(token, |w| {
         w.step(dt).map(|_| 0).map_err(|e| format!("{:?}", e))
@@ -176,16 +201,30 @@ fn auralite_world_destroy(token: u64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world2_destroy — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
+/// Token must be valid; double destroy returns error -1.
 pub extern "C" fn auralite_world2_destroy(token: u64) -> i32 {
     auralite_world_destroy(token)
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world3_destroy — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
+/// Token must be valid; double destroy returns error -1.
 pub extern "C" fn auralite_world3_destroy(token: u64) -> i32 {
     auralite_world_destroy(token)
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world_count — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_world_count() -> u32 {
     registry()
         .lock()
@@ -212,10 +251,14 @@ uint32_t auralite_abi_version(void);
 const char* auralite_last_error(void);
 int32_t auralite_set_log_callback(AuraliteLogCallback cb);
 int32_t auralite_set_debug_draw_line_callback(AuraliteDebugDrawLineCallback cb);
+typedef void (*AuraliteSchedulerCallback)(uint32_t chunk_count);
+int32_t auralite_set_scheduler_callback(AuraliteSchedulerCallback cb);
 int32_t auralite_world2_create(uint64_t* out);
 int32_t auralite_world3_create(uint64_t* out);
 int32_t auralite_world2_step(uint64_t token, float dt);
 int32_t auralite_world3_step(uint64_t token, float dt);
+int32_t auralite_world2_step_with_external_scheduler(uint64_t token, float dt);
+int32_t auralite_world3_step_with_external_scheduler(uint64_t token, float dt);
 int32_t auralite_world2_destroy(uint64_t token);
 int32_t auralite_world3_destroy(uint64_t token);
 uint32_t auralite_world_count(void);
@@ -232,14 +275,57 @@ int32_t auralite_world3_batch_query_positions(uint64_t token, const uint64_t* bo
 #endif /* AURALITE_H */
 "##;
 
+/// Log callback type for FFI.
+/// # Safety: Callback must not panic, must be thread-safe if called from multiple threads.
 pub type AuraliteLogCallback = extern "C" fn(level: u32, msg: *const u8);
+/// Debug draw line callback for FFI.
+/// # Safety: Must not panic, parameters are finite floats.
 pub type AuraliteDebugDrawLineCallback =
     extern "C" fn(x1: f32, y1: f32, z1: f32, x2: f32, y2: f32, z2: f32, color_rgb: u32);
 
 static LOG_CALLBACK: OnceLock<Mutex<Option<AuraliteLogCallback>>> = OnceLock::new();
 static DRAW_LINE_CALLBACK: OnceLock<Mutex<Option<AuraliteDebugDrawLineCallback>>> = OnceLock::new();
+/// Scheduler callback type — called with chunk count when external scheduler is invoked.
+pub type AuraliteSchedulerCallback = extern "C" fn(chunk_count: u32);
+static SCHEDULER_CALLBACK: OnceLock<Mutex<Option<AuraliteSchedulerCallback>>> = OnceLock::new();
+
+/// External C scheduler that invokes C callback then runs tasks sequentially.
+/// Used to verify FFI scheduler integration (H7).
+pub struct ExternalCScheduler;
+impl auralite_core::Scheduler for ExternalCScheduler {
+    fn run_batch(&mut self, jobs: &mut [auralite_core::Job], user_data: &mut [u8]) {
+        if let Some(cb) = SCHEDULER_CALLBACK
+            .get()
+            .and_then(|m| m.lock().ok())
+            .and_then(|g| *g)
+        {
+            cb(jobs.len() as u32);
+        }
+        // Fallback to single-thread execution
+        let total = jobs.len() as u32;
+        for job in jobs {
+            (job.work)(job.id, total, user_data);
+        }
+    }
+    fn run_slice<T: Send>(&mut self, slice: &mut [T], work: fn(&mut T)) {
+        if let Some(cb) = SCHEDULER_CALLBACK
+            .get()
+            .and_then(|m| m.lock().ok())
+            .and_then(|g| *g)
+        {
+            cb(slice.len() as u32);
+        }
+        for item in slice {
+            (work)(item);
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
+/// auralite_set_log_callback — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_set_log_callback(cb: Option<AuraliteLogCallback>) -> i32 {
     boundary(|| {
         let mut l = LOG_CALLBACK
@@ -252,6 +338,10 @@ pub extern "C" fn auralite_set_log_callback(cb: Option<AuraliteLogCallback>) -> 
 }
 
 #[unsafe(no_mangle)]
+/// auralite_set_debug_draw_line_callback — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_set_debug_draw_line_callback(
     cb: Option<AuraliteDebugDrawLineCallback>,
 ) -> i32 {
@@ -265,7 +355,57 @@ pub extern "C" fn auralite_set_debug_draw_line_callback(
     })
 }
 
+/// Sets external scheduler callback for verifying scheduler integration (H7).
+/// The callback receives chunk count and may be called during step_with_scheduler.
+///
+/// # Safety
+/// Callback must be thread-safe if it may be called from multiple threads (current implementation calls sequentially, but future may parallelize). Must not panic.
 #[unsafe(no_mangle)]
+pub extern "C" fn auralite_set_scheduler_callback(cb: Option<AuraliteSchedulerCallback>) -> i32 {
+    boundary(|| {
+        let mut l = SCHEDULER_CALLBACK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map_err(|_| "poisoned")?;
+        *l = cb;
+        Ok(0)
+    })
+}
+
+/// Steps World2 using external C scheduler (for H7 verification).
+/// Invokes scheduler callback if set, then steps.
+///
+/// # Safety
+/// Token must be valid, dt finite positive.
+#[unsafe(no_mangle)]
+pub extern "C" fn auralite_world2_step_with_external_scheduler(token: u64, dt: f32) -> i32 {
+    with_world2(token, |w| {
+        let mut sched = ExternalCScheduler;
+        w.step_with_scheduler(dt, &mut sched)
+            .map(|_| 0)
+            .map_err(|e| format!("{:?}", e))
+    })
+}
+
+/// Steps World3 using external C scheduler (for H7 verification).
+///
+/// # Safety
+/// Token must be valid, dt finite positive.
+#[unsafe(no_mangle)]
+pub extern "C" fn auralite_world3_step_with_external_scheduler(token: u64, dt: f32) -> i32 {
+    with_world3(token, |w| {
+        let mut sched = ExternalCScheduler;
+        w.step_with_scheduler(dt, &mut sched)
+            .map(|_| 0)
+            .map_err(|e| format!("{:?}", e))
+    })
+}
+
+#[unsafe(no_mangle)]
+/// auralite_world2_add_body — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub unsafe extern "C" fn auralite_world2_add_body(
     token: u64,
     kind: u8,
@@ -294,7 +434,15 @@ pub unsafe extern "C" fn auralite_world2_add_body(
                 x: vx as auralite_math::Real,
                 y: vy as auralite_math::Real,
             })
-            .mass(mass as auralite_math::Real);
+            .mass(mass as auralite_math::Real)
+            .add_collider(auralite_dynamics::Collider2 {
+                shape: auralite_dynamics::ColliderShape2::Circle(
+                    auralite_geometry::Circle2::new(0.5 as auralite_math::Real).unwrap(),
+                ),
+                offset: auralite_math::Vec2::ZERO,
+                material: auralite_dynamics::Material::default(),
+                filter: auralite_collision::CollisionFilter::default(),
+            });
         b.kind = bkind;
         let h = w.add_body(b).map_err(|_| "add body failed")?;
         unsafe {
@@ -305,6 +453,10 @@ pub unsafe extern "C" fn auralite_world2_add_body(
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world3_add_body — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub unsafe extern "C" fn auralite_world3_add_body(
     token: u64,
     kind: u8,
@@ -349,6 +501,10 @@ pub unsafe extern "C" fn auralite_world3_add_body(
 
 #[allow(clippy::unnecessary_cast)]
 #[unsafe(no_mangle)]
+/// auralite_world2_body_query — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub unsafe extern "C" fn auralite_world2_body_query(
     token: u64,
     body_id: u64,
@@ -387,6 +543,10 @@ pub unsafe extern "C" fn auralite_world2_body_query(
 
 #[allow(clippy::unnecessary_cast)]
 #[unsafe(no_mangle)]
+/// auralite_world3_body_query — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub unsafe extern "C" fn auralite_world3_body_query(
     token: u64,
     body_id: u64,
@@ -432,6 +592,10 @@ pub unsafe extern "C" fn auralite_world3_body_query(
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world2_body_apply_impulse — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_world2_body_apply_impulse(
     token: u64,
     body_id: u64,
@@ -456,6 +620,10 @@ pub extern "C" fn auralite_world2_body_apply_impulse(
 }
 
 #[unsafe(no_mangle)]
+/// auralite_world3_body_apply_impulse — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_world3_body_apply_impulse(
     token: u64,
     body_id: u64,
@@ -483,6 +651,10 @@ pub extern "C" fn auralite_world3_body_apply_impulse(
 
 #[allow(clippy::unnecessary_cast)]
 #[unsafe(no_mangle)]
+/// auralite_world3_batch_query_positions — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub unsafe extern "C" fn auralite_world3_batch_query_positions(
     token: u64,
     body_ids: *const u64,
@@ -517,11 +689,19 @@ pub unsafe extern "C" fn auralite_world3_batch_query_positions(
 }
 
 #[unsafe(no_mangle)]
+/// auralite_header_string — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub extern "C" fn auralite_header_string() -> *const u8 {
     CANONICAL_HEADER.as_ptr()
 }
 
 #[unsafe(no_mangle)]
+/// auralite_verify_header — C ABI export.
+///
+/// # Safety
+/// Caller must ensure pointers are valid as per C ABI contract. Null pointers are checked and return error codes. For `*_create`, `out` must be non-null writable. For `*_query`, output pointers may be null (optional). The returned error string from `auralite_last_error` is valid until next FFI call on this thread.
 pub unsafe extern "C" fn auralite_verify_header(header: *const u8, len: u32) -> i32 {
     boundary(|| {
         if header.is_null() {
@@ -676,5 +856,56 @@ mod tests {
         assert_eq!(out_positions[4], 5.0);
         assert_eq!(out_positions[5], 6.0);
         assert_eq!(auralite_world3_destroy(token), 0);
+    }
+
+    static mut SCHEDULER_CALLED: u32 = 0;
+    extern "C" fn test_scheduler_cb(count: u32) {
+        unsafe {
+            SCHEDULER_CALLED = count;
+        }
+    }
+
+    #[test]
+    fn ffi_scheduler_callback_invoked() {
+        // H7 verification: external scheduler callback is invoked via step_with_external_scheduler
+        unsafe {
+            SCHEDULER_CALLED = 0;
+        }
+        assert_eq!(
+            super::auralite_set_scheduler_callback(Some(test_scheduler_cb)),
+            0
+        );
+        let mut token: u64 = 0;
+        assert_eq!(unsafe { super::auralite_world2_create(&raw mut token) }, 0);
+        // Add a few bodies to create some pairs/chunks
+        for i in 0..20 {
+            let mut bid: u64 = 0;
+            // Place bodies overlapping at same height to ensure many broadphase pairs (>16) -> scheduler path
+            let _ = unsafe {
+                super::auralite_world2_add_body(
+                    token,
+                    2,
+                    (i as f32) * 0.1,
+                    5.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    &raw mut bid,
+                )
+            };
+        }
+        assert_eq!(
+            super::auralite_world2_step_with_external_scheduler(token, 0.016),
+            0
+        );
+        // Callback should have been called with chunk count >0
+        let called = unsafe { SCHEDULER_CALLED };
+        assert!(
+            called > 0,
+            "scheduler callback should be invoked, got {}",
+            called
+        );
+        assert_eq!(super::auralite_set_scheduler_callback(None), 0);
+        assert_eq!(super::auralite_world2_destroy(token), 0);
     }
 }

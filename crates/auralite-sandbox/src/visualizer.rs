@@ -2,6 +2,7 @@
 //! - SvgVisualizer renders real World2/World3 state (engine-driven)
 //! - generate_recorded_replay_viewer produces watermarked HTML that plays back ENGINE-RECORDED trajectories + real hashes (H1 fix)
 #![forbid(unsafe_code)]
+#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 
 use auralite_dynamics::{BodyType, World2, World3};
 use auralite_math::{Vec2, Vec3};

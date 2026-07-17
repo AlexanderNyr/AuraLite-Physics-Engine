@@ -3,7 +3,6 @@
 //! PBF-class fluid (density/incompressibility, viscosity, neighbor search),
 //! buoyancy from displaced volume, and force field zones.
 #![forbid(unsafe_code)]
-#![allow(missing_docs, clippy::too_many_arguments)]
 
 use auralite_core::Rng;
 use auralite_dynamics::Body3;
@@ -14,24 +13,46 @@ use auralite_math::{ABS_EPSILON, Real, Vec3};
 /// SoA particle storage with free-list recycling.
 #[derive(Clone, Debug)]
 pub struct ParticleStorage {
+    /// positions field.
     pub positions: Vec<Vec3>,
+    /// velocities field.
     pub velocities: Vec<Vec3>,
+    /// lifetimes field.
     pub lifetimes: Vec<Real>,
+    /// max_lifetimes field.
     pub max_lifetimes: Vec<Real>,
+    /// types field.
     pub types: Vec<ParticleType>,
+    /// alive field.
     pub alive: Vec<bool>,
+    /// free_list field.
     pub free_list: Vec<usize>,
+    /// capacity field.
     pub capacity: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// ParticleType enum.
 pub enum ParticleType {
+    /// Fluid particle.
     Fluid,
+    /// Buoyancy sample particle.
     BuoyancySample,
+    /// Generic particle.
     Generic,
 }
 
 impl ParticleStorage {
+    /// Creates new particle storage with given capacity.
+    ///
+    /// # Example
+    /// ```
+    /// use auralite_particles::{ParticleStorage, ParticleType};
+    /// use auralite_math::Vec3;
+    /// let mut storage = ParticleStorage::new(10);
+    /// storage.spawn(Vec3::ZERO, Vec3::Y, 1.0, ParticleType::Generic);
+    /// assert_eq!(storage.alive_count(), 1);
+    /// ```
     pub fn new(capacity: usize) -> Self {
         Self {
             positions: Vec::with_capacity(capacity),
@@ -45,6 +66,7 @@ impl ParticleStorage {
         }
     }
 
+    /// spawn function.
     pub fn spawn(
         &mut self,
         pos: Vec3,
@@ -74,6 +96,7 @@ impl ParticleStorage {
         Some(idx)
     }
 
+    /// kill function.
     pub fn kill(&mut self, idx: usize) {
         if idx < self.alive.len() && self.alive[idx] {
             self.alive[idx] = false;
@@ -81,6 +104,7 @@ impl ParticleStorage {
         }
     }
 
+    /// iterate_alive function.
     pub fn iterate_alive(&self) -> impl Iterator<Item = (usize, &Vec3, &Vec3, &ParticleType)> {
         self.alive.iter().enumerate().filter_map(move |(i, &a)| {
             if a {
@@ -91,6 +115,7 @@ impl ParticleStorage {
         })
     }
 
+    /// alive_indices function.
     pub fn alive_indices(&self) -> Vec<usize> {
         self.alive
             .iter()
@@ -99,10 +124,12 @@ impl ParticleStorage {
             .collect()
     }
 
+    /// alive_count function.
     pub fn alive_count(&self) -> usize {
         self.alive.iter().filter(|&&a| a).count()
     }
 
+    /// clear function.
     pub fn clear(&mut self) {
         for i in 0..self.alive.len() {
             if self.alive[i] {
@@ -115,20 +142,30 @@ impl ParticleStorage {
 // ─── Seeded deterministic emitter ────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
+/// Emitter struct.
 pub struct Emitter {
+    /// position field.
     pub position: Vec3,
+    /// direction field.
     pub direction: Vec3,
+    /// spread field.
     pub spread: Real,
+    /// speed field.
     pub speed: Real,
+    /// rate field.
     pub rate: Real, // particles per second
+    /// lifetime field.
     pub lifetime: Real,
+    /// particle_type field.
     pub particle_type: ParticleType,
+    /// count field.
     pub count: u32,
     accumulation: Real,
     rng: Rng,
 }
 
 impl Emitter {
+    /// new function.
     pub fn new(
         position: Vec3,
         direction: Vec3,
@@ -152,6 +189,7 @@ impl Emitter {
         }
     }
 
+    /// emit function.
     pub fn emit(&mut self, dt: Real, storage: &mut ParticleStorage) -> u32 {
         self.accumulation += self.rate * dt;
         let mut spawned = 0;
@@ -213,24 +251,35 @@ fn lap_w_viscosity(r: Vec3, h: Real) -> Real {
 /// Neighbor list for PBF.
 #[derive(Clone, Debug)]
 pub struct NeighborList {
+    /// neighbors field.
     pub neighbors: Vec<Vec<usize>>,
 }
 
 /// PBF fluid state.
 #[derive(Clone, Debug)]
 pub struct PbfFluid {
+    /// particle_indices field.
     pub particle_indices: Vec<usize>,
+    /// densities field.
     pub densities: Vec<Real>,
+    /// lambdas field.
     pub lambdas: Vec<Real>,
+    /// predicted_positions field.
     pub predicted_positions: Vec<Vec3>,
+    /// rest_density field.
     pub rest_density: Real,
+    /// particle_radius field.
     pub particle_radius: Real,
+    /// kernel_h field.
     pub kernel_h: Real,
+    /// stiffness function.
     pub stiffness: Real,
+    /// viscosity field.
     pub viscosity: Real,
 }
 
 impl PbfFluid {
+    /// new function.
     pub fn new(
         rest_density: Real,
         particle_radius: Real,
@@ -538,24 +587,39 @@ pub fn apply_buoyancy_to_world(
 /// Types of force fields.
 #[derive(Clone, Debug)]
 pub enum FieldType {
+    /// Uniform acceleration field.
     Uniform {
+        /// Acceleration vector.
         acceleration: Vec3,
     },
+    /// Radial field emanating from center.
     Radial {
+        /// Center position.
         center: Vec3,
+        /// Strength.
         strength: Real,
+        /// Maximum radius.
         max_radius: Real,
     },
+    /// Wind field with direction and turbulence.
     Wind {
+        /// Wind direction.
         direction: Vec3,
+        /// Wind speed.
         speed: Real,
+        /// Turbulence factor.
         turbulence: Real,
     },
+    /// Drag field with linear and quadratic coefficients.
     Drag {
+        /// Linear drag coefficient.
         linear: Real,
+        /// Quadratic drag coefficient.
         quadratic: Real,
     },
+    /// Damping field.
     Damping {
+        /// Damping factor.
         factor: Real,
     },
 }
@@ -563,15 +627,22 @@ pub enum FieldType {
 /// A force zone applying forces to particles and rigid bodies within a volume.
 #[derive(Clone, Debug)]
 pub struct ForceField {
+    /// Type of force field.
     pub field_type: FieldType,
+    /// Position of field center.
     pub position: Vec3,
+    /// Radius of effect.
     pub radius: Real,
-    pub falloff: Real, // 0 = constant, 1 = linear falloff
+    /// Falloff factor (0 = constant, 1 = linear).
+    pub falloff: Real,
+    /// Whether affects particles.
     pub affects_particles: bool,
+    /// Whether affects rigid bodies.
     pub affects_rigid: bool,
 }
 
 impl ForceField {
+    /// new function.
     pub fn new(field_type: FieldType, position: Vec3, radius: Real) -> Self {
         Self {
             field_type,

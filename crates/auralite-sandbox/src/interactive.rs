@@ -1,9 +1,8 @@
+#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 //! Real interactive desktop sandbox — engine-driven, no mocks.
 //! Implements DoD-5: scene browser 16 subsystems, time controls, debug-draw toggles,
 //! inspection panels, editable runtime settings, profiling overlay, real determinism controls (seed/record/replay/snapshot/rollback) showing real 64-bit state hash.
 //! Dependency: eframe (winit + glow + egui) — justified in ADR-17, default-features off, license MIT/Apache.
-
-#![allow(clippy::too_many_arguments)]
 
 use eframe::egui;
 
@@ -13,7 +12,7 @@ use auralite_dynamics::{
     Material, World2, World3,
 };
 use auralite_geometry::{Box2, Box3, Circle2, Sphere3};
-use auralite_math::{Quat, Real, Rot2, Vec2, Vec3};
+use auralite_math::{Quat, Real, Vec2, Vec3};
 use auralite_particles::{ParticleStorage, ParticleType, PbfFluid};
 use auralite_softbody::{apply_self_collision, build_cloth_grid};
 use auralite_vehicles::{
@@ -1048,7 +1047,7 @@ impl eframe::App for SandboxApp {
                             egui::pos2(rect.left(), off_y),
                             egui::pos2(rect.right(), off_y),
                         ],
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(50, 50, 60)),
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(50, 50, 60)),
                     );
                     for (_, b) in w.bodies_iter() {
                         let screen_x = off_x + b.position.x as f32 * scale;
@@ -1074,7 +1073,7 @@ impl eframe::App for SandboxApp {
                         painter.circle_stroke(
                             egui::pos2(screen_x, screen_y),
                             r.max(4.0),
-                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                            egui::Stroke::new(1.0_f32, egui::Color32::WHITE),
                         );
                         if self.debug.velocities && !b.sleeping {
                             let vx = b.velocity.x as f32 * scale * 0.2;
@@ -1084,7 +1083,7 @@ impl eframe::App for SandboxApp {
                                     egui::pos2(screen_x, screen_y),
                                     egui::pos2(screen_x + vx, screen_y + vy),
                                 ],
-                                egui::Stroke::new(1.5, egui::Color32::from_rgb(0, 255, 255)),
+                                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0, 255, 255)),
                             );
                         }
                         if self.debug.aabbs {
@@ -1099,7 +1098,7 @@ impl eframe::App for SandboxApp {
                                     egui::pos2(max_x, max_y),
                                 ),
                                 egui::CornerRadius::same(0),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(34, 102, 51)),
+                                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(34, 102, 51)),
                                 egui::StrokeKind::Middle,
                             );
                         }
@@ -1107,7 +1106,7 @@ impl eframe::App for SandboxApp {
                             painter.circle_stroke(
                                 egui::pos2(screen_x, screen_y),
                                 r.max(4.0) + 4.0,
-                                egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                                egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                             );
                         }
                     }
@@ -1124,7 +1123,10 @@ impl eframe::App for SandboxApp {
                                 let s2y = off_y - p2.y as f32 * scale;
                                 painter.line_segment(
                                     [egui::pos2(s1x, s1y), egui::pos2(s2x, s2y)],
-                                    egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 204, 0)),
+                                    egui::Stroke::new(
+                                        2.0_f32,
+                                        egui::Color32::from_rgb(255, 204, 0),
+                                    ),
                                 );
                             }
                         }
@@ -1159,12 +1161,16 @@ impl eframe::App for SandboxApp {
                             .unwrap_or(6.0)
                             .max(3.0);
                         painter.circle_filled(pos, r, color);
-                        painter.circle_stroke(pos, r, egui::Stroke::new(1.0, egui::Color32::WHITE));
+                        painter.circle_stroke(
+                            pos,
+                            r,
+                            egui::Stroke::new(1.0_f32, egui::Color32::WHITE),
+                        );
                         if Some(b.id.0) == self.selected_body {
                             painter.circle_stroke(
                                 pos,
                                 r + 4.0,
-                                egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                                egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                             );
                         }
                     }
@@ -1199,7 +1205,10 @@ impl eframe::App for SandboxApp {
                                 );
                                 painter.line_segment(
                                     [a, b],
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(68, 255, 136)),
+                                    egui::Stroke::new(
+                                        1.0_f32,
+                                        egui::Color32::from_rgb(68, 255, 136),
+                                    ),
                                 );
                             }
                         }

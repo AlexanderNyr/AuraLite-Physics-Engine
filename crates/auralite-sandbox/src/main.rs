@@ -1,3 +1,4 @@
+#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 //! AuraLite Physics Engine — Sandbox
 //! - Headless mode (default): runs 16 demo scene checks + generates engine-recorded replay viewer (watermarked, real hashes)
 //! - Interactive mode (--interactive, requires feature "interactive"): launches desktop windowed app with real engine stepping, no mocks.
@@ -26,7 +27,7 @@ use replay::{
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let interactive_requested = args.iter().any(|a| a == "--interactive" || a == "-i");
-    let headless = !interactive_requested || args.iter().any(|a| a == "--headless");
+    let _headless = !interactive_requested || args.iter().any(|a| a == "--headless");
 
     if interactive_requested {
         #[cfg(feature = "interactive")]

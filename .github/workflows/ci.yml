@@ -42,6 +42,9 @@ jobs:
       - name: Run Automated Sandbox Scene Verifications (Headless)
         run: cargo run -p auralite-sandbox --release
 
+      - name: Run Fuzz Smoke (Stable Harness, H8)
+        run: cargo run -p auralite-fuzz --release
+
       - name: Verify Benchmark Compilation (Smoke Check)
         run: cargo bench --workspace --no-run
 

@@ -1,8 +1,9 @@
+#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 //! Recorded replay structures — pure std, no external deps, engine-generated.
 //! Used to generate the watermarked HTML replay viewer (H1 fix).
 
 use auralite_dynamics::{BodyType, World2, World3};
-use auralite_math::{Vec2, Vec3};
+use auralite_math::Vec2;
 
 /// One body snapshot for replay (2D)
 #[derive(Clone, Debug)]

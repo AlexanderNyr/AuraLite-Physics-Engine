@@ -1,16 +1,17 @@
 [package]
-name = "auralite-ffi"
+name = "auralite-fuzz"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-[lib]
-crate-type = ["rlib", "staticlib", "cdylib"]
+
 [dependencies]
-auralite-core = { path = "../auralite-core" }
-auralite-collision = { path = "../auralite-collision" }
-auralite-geometry = { path = "../auralite-geometry" }
-auralite-dynamics = { path = "../auralite-dynamics" }
 auralite-math = { path = "../auralite-math" }
+auralite-core = { path = "../auralite-core" }
+auralite-geometry = { path = "../auralite-geometry" }
+auralite-collision = { path = "../auralite-collision" }
+auralite-dynamics = { path = "../auralite-dynamics" }
+auralite-serialize = { path = "../auralite-serialize" }
+
 [lints]
 workspace = true

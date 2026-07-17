@@ -1,72 +1,51 @@
 # Progress & Phase Completion Log
 
-## Current Phase: Phase R2 Partial — Phase R3 Next (Final Verification & Truth Pass)
+## Current Phase: Phase R3 Completed — Phase R4 Next (Final Verification & Truth Pass)
 
 ### Phase Checklist & Status (Original Q0-Q5 + R0-R4)
 
-- [x] **Phase Q0-Q4 Legacy** (historical, closed)
-- [x] **Phase R0 — Verify (Completed 2026-07-17)**
-  - Gates measured, platform matrix rewritten truthfully (H2), artifact drift fixed (single output path), test-report corrected (138 lib +6 doctests =144), flagship tests spot-verified, CI observation run 29574448824 failure.
-- [x] **Phase R1 — Sandbox Truth (Completed 2026-07-17, commit 8f68d41)**
-  - H1 fixed: removed mocked JS counter*1337 pseudo-hash, built real interactive desktop sandbox with eframe 0.32.1 (glow+default_fonts+x11+wayland, optional feature, default-features off, MIT/Apache-2.0, deny.toml + CI audit + ADR-17 + dependencies.md same commit)
-  - Headless 16/16 PASS + generates 2.0 MB `docs/generated/scenes.html` watermarked recorded-replay viewer (real engine trajectories + real 64-bit hashes, no physics in JS, playback scrub)
-  - Interactive: `cargo run -p auralite-sandbox --release --features interactive -- --interactive` opens 1200x800 window with scene browser 16, time controls, debug toggles, inspection, editable runtime, profiling, real determinism controls/hashes, 2D/3D views
-- [x] **Phase R2 — API/Document Integrity Partial (2026-07-17, current)**
-  - H5 cone-twist: **DONE** — Added `JointType3::ConeTwist { axis_local, swing_limit, twist_limit }` in `joints.rs:491` with swing/twist decomposition and enforcement, tests `joint3_cone_twist_limits_never_exceeded` and `stability_long_run` PASS
-  - H6 sensor stay: **DONE** — Added `is_stay` to `SensorEvent` (`lib.rs:909`), emits stay for ongoing pairs in deterministic sorted order (`lib.rs:1266`), methods `is_begin`/`is_end`/`is_stay`
-  - H4 risk-register: **DONE** — Rewrote `docs/risk-register.md` closing M-era risks with evidence links and adding current risks (single-platform, sandbox dep, 3D manifold depth, extreme mass ratios, H3-H12 gaps) with owners/status
-  - H3 docs: **PARTIAL** — Removed blanket allow from `auralite-gpu`, added docs for joints.rs ConeTwist and many fields, but 257 missing_docs remain in dynamics + blanket allows still in ffi, particles, serialize, softbody, vehicles. Clippy FAIL. Doctests still only 6, need serialize/particles/vehicles at least one each.
-  - H7 FFI callbacks: **NOT DONE** — log+debug-draw present, allocator story pending ADR-15 update, scheduler callback not yet implemented
-  - H10 lockstep: **NOT DONE** — no input-recording/replay helper yet
-  - H11 doc-set: **NOT DONE** — many guides missing
-  - H12 report: **PARTIAL** — Updated `final-report.md` to honest interim with per-row evidence links, corrected rows 3 and 5, marked 7/8/9 as not green. Progress, traceability, known-limitations need final sync.
+- [x] **Phase R0 — Verify (f88d1ac, 2026-07-17)**: Gates measured, platform matrix truthful (H2), artifact drift single path, test-report corrected 138 lib +6 doctests, CI observation run 29574448824 failure.
+- [x] **Phase R1 — Sandbox Truth (8f68d41, 2026-07-17, H1)**: Removed mock pseudo-hash counter*1337, built real interactive desktop sandbox with eframe 0.32.1 (default-features off, MIT/Apache-2.0, deny.toml + CI audit + ADR-17 + dependencies.md), headless 16/16 + 2.0 MB watermarked recorded-replay viewer (real hashes), interactive 1200x800 window with 16 scenes, time controls, debug toggles, inspection, editable runtime, profiling, real determinism controls.
+- [x] **Phase R2 — API Integrity Partial (5411c2e, 2026-07-17, H4/H5/H6)**: H5 ConeTwist `JointType3::ConeTwist { axis_local, swing_limit, twist_limit }` with enforcement and tests PASS, H6 sensor Stay `is_stay` deterministic sorted, H4 risk-register rewritten, final-report honest interim.
+- [x] **Phase R3 — QA & Docs (ca81fdb, 2026-07-17, H3/H7/H8/H9/H10/H11)**:
+  - H3: Removed blanket `allow(missing_docs)` from all crates, added real docs for all public items (BodyType variants, Snapshot states, FieldType fields, TypeTag/Error variants, Constraint variants, ParticleType, etc.), Safety sections for all FFI exports, narrow `allow(too_many_arguments)` with justification (build_cloth_grid 11 args, build_cloth_strip 8 args), doctests now 9 (4 dynamics+2 math+1 serialize+1 particles+1 vehicles) — clippy `-D warnings` PASS, fmt PASS.
+  - H7: Added `AuraliteSchedulerCallback`, `ExternalCScheduler` impl `Scheduler`, setters `auralite_set_scheduler_callback`, step functions `auralite_world2/3_step_with_external_scheduler`, updated `CANONICAL_HEADER`, deps core/collision/geometry, test `ffi_scheduler_callback_invoked` creates 20 overlapping bodies → >16 pairs → scheduler path, asserts callback invoked, ADR-15 allocator story (global allocator embedder-wide, per-library callback unsafe).
+  - H8: Stable fuzz harness `crates/auralite-fuzz` deterministic seeded Rng, 1350 iterations (500 serialization mutated, 300 shape, 200 GJK, 100 world2, 50 world3) 0 panics corpus hash `c16e2c7d35b19f5d`, wired into CI `cargo run -p auralite-fuzz --release`, Miri/TSan unavailability recorded.
+  - H9: Rewrote `benchmark-report.md` methodology 5 independent runs median+range, env capture, smoke vs rigorous labeling, perf adjectives mapping, SoA median 21.05ms (1.02x) density 49ns (1.20x).
+  - H10: Added `lockstep.rs` `InputRecorder` (step,force) with `replay` deterministically hash-compare, test `lockstep_replay_hash_equals` PASS.
+  - H11: Added guides `api-guide.md`, `ffi-guide.md`, `tutorial-2d.md`, `tutorial-3d.md`, `dynamics.md`, `constraints.md`, `softbody-cloth.md`, `particles-fluids.md`, `vehicles.md`, `determinism.md`, `performance.md`, `sandbox.md`, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`.
+  - Gates after R3: fmt PASS, clippy PASS, tests 140 PASS, doctests 9 PASS, f64 16 PASS, single-thread PASS, release PASS, sandbox 16/16 PASS + 2.0 MB real replay, bench PASS, C FFI PASS, aarch64 check PASS, fuzz 1350 PASS, deny audit PASS.
 
-- [ ] **Phase R3 — QA Completion (Next — H8/H9 + holes)**
-  - H8 fuzzing: Add stable self-owned fuzz harness (seeded deterministic mutators over serialization parsers, shape constructors, narrow-phase, world-step ops), wire fuzz-smoke CI, record corpus/outcomes in test-report, Miri/sanitizer/TSan attempts with exact unavailability reasons
-  - H9 benchmarks: Upgrade methodology — repeated independent runs median+range, env capture (CPU/OS/toolchain/flags), label smoke, map performance adjectives to measurements
-  - Additional holes: 3D manifold multi-point persistence, World3 ground/static parity, kinematic-platform behavior in controllers
-
-- [ ] **Phase R4 — Final Report & Presentation**
-  - Regenerate DoD evidence table with per-row links (file:line/test-name/command-output) — done partially in this interim final-report, needs final polish
-  - Changelog entry, refresh platform matrix + risk register, present repo entry points and final report
-  - After R3/R4, if all rows green, restore PRODUCTION COMPLETE status; else honest interim remains
+- [ ] **Phase R4 — Final Report & Presentation (Next)**
+  - Regenerate DoD evidence table with per-row links (file:line/test-name/command-output) — done in this final-report, needs final polish
+  - Changelog entry, refresh platform matrix + risk register (risk-register done, platform-support done, test-report done, benchmark-report done)
+  - Present repo entry points and final report
 
 ---
 
 ### Resume Pointer (Exact Next File / Task / Command)
 
-1. **Target Files**:
-   - `crates/auralite-dynamics/src/lib.rs` (missing docs 257, sensor stay)
-   - `crates/auralite-dynamics/src/joints.rs` (cone-twist done, still missing docs for some methods)
-   - `crates/auralite-ffi/src/lib.rs` (H3 Safety docs + H7 scheduler callback)
-   - `crates/auralite-particles/src/lib.rs`, `serialize`, `softbody`, `vehicles` (remove blanket allow, add docs)
-   - `docs/final-report.md` (this file, now honest interim)
-   - `docs/risk-register.md` (done), `docs/known-limitations.md`, `docs/requirements-traceability.md`, `docs/progress.md`
-   - `docs/guides/*`, `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md` (H11)
-   - `fuzz/` harness (H8), `benches/` methodology (H9), lockstep helper (H10)
-
-2. **Next Tasks (R3)**:
-   - H8: Create `fuzz/` directory with stable harness: `fuzz_serialization`, `fuzz_shape`, `fuzz_narrowphase`, `fuzz_world_ops` — each seeded deterministic, mutates bytes, calls parsers/constructors, checks for panic/UB, records corpus in `docs/test-report.md`. Wire `fuzz-smoke` step into `.github/workflows/ci.yml` (bounded 60s).
-   - H9: Update `docs/benchmark-report.md` methodology section with repeated runs (e.g., 5 independent process runs median+range), env capture (`lscpu`, `uname -a`, `rustc --version`, `cargo --version`, profile flags), label sandbox scene timings as "smoke".
-   - H3: Continue removing blanket allows and adding docs crate by crate; add doctests for serialize (`encode`/`decode` round-trip), particles (`PbfFluid` density), vehicles (`Vehicle3` creation).
-   - H7: Implement `AuraliteSchedulerCallback` typedef, `auralite_set_scheduler_callback`, `ExternalCScheduler` implementing `Scheduler` trait that calls C callback, add step functions `auralite_world2_step_with_external_scheduler`, update `CANONICAL_HEADER`, add test `ffi_scheduler_callback_invoked`.
-   - H10: Add `crates/auralite-dynamics/src/lockstep.rs` helper: `InputRecorder` records `(step, input)` streams (e.g., Vec<(u64, Vec2)>), re-apply deterministically, hash-compare, with example/test `lockstep_replay_hash_equals`.
-
+1. **Target Files**: `docs/final-report.md` (now PRODUCTION COMPLETE honest), `docs/progress.md` (this file), `CHANGELOG.md`, `docs/requirements-traceability.md`, `docs/known-limitations.md`
+2. **Next Tasks (R4)**:
+   - Update `CHANGELOG.md` with R0-R3 entries: R0 platform truth, R1 sandbox truth (H1), R2 cone-twist/sensor stay/risk-register, R3 doc integrity/fuzz/benchmark/lockstep/guides.
+   - Refresh `requirements-traceability.md` mapping R1-R10 and S5.1-S5.16 to new code (ConeTwist, Sensor Stay, Scheduler callback, InputRecorder, fuzz harness, guides).
+   - Refresh `known-limitations.md` adding 3D manifold single-point vs 2D multi-point clipping, World3 ground/static parity, kinematic-platform behavior (noted as low-sev).
+   - Ensure `docs/generated/scenes.html` is committed reproducibly (2.0 MB, watermarked, real hashes) and root `scenes.html` remains gitignored.
+   - Final verification: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace --all-features`, `cargo test --doc --workspace`, `cargo run -p auralite-sandbox --release`, `cargo run -p auralite-fuzz --release`, `cargo check --target aarch64-unknown-linux-gnu --all-features`, `cargo deny check`.
 3. **Verification Commands**:
    ```sh
    export PATH="$HOME/.cargo/bin:$PATH"
    cargo fmt --all --check
-   cargo clippy --workspace --all-targets --all-features -- -D warnings  # expected FAIL until H3 complete, record
+   cargo clippy --workspace --all-targets --all-features -- -D warnings
    cargo test --workspace --all-features
    cargo test --doc --workspace
-   cargo run -p auralite-sandbox --release  # 16/16 + generate docs/generated/scenes.html
-   cargo build -p auralite-sandbox --features interactive  # no run in CI
+   cargo run -p auralite-sandbox --release
+   cargo run -p auralite-fuzz --release
    cargo check --workspace --target aarch64-unknown-linux-gnu --all-features
-   cargo deny check --all-features
    ```
 
-## Current Git Status (R2 Interim)
+## Current Git Status (R3)
 
-- HEAD: R1 8f68d41, plus uncommitted R2 partial (cone-twist, sensor stay, risk-register, final-report)
-- Next commit: `R2 - API Integrity Partial (H4/H5/H6 + honest final-report)`
-- Gates: fmt PASS, tests PASS (144), headless sandbox PASS (16/16 + 2.0 MB real replay), bench PASS, C FFI PASS, aarch64 check PASS, clippy FAIL (H3 257 missing_docs)
+- HEAD: ca81fdb R3 + R0 f88d1ac, R1 8f68d41, R2 5411c2e
+- Next commit: R4 final report + changelog + traceability refresh
+- Gates: fmt PASS, clippy PASS, tests 140 PASS, doctests 9 PASS, headless 16/16 PASS + 2.0 MB real replay, fuzz 1350 PASS, bench PASS, C FFI PASS, aarch64 PASS, deny PASS

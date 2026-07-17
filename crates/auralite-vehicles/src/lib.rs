@@ -1,6 +1,5 @@
 //! Vehicles (2D/3D) and character controllers (2D/3D).
 #![forbid(unsafe_code)]
-#![allow(missing_docs, clippy::too_many_arguments)]
 
 use auralite_collision::CollisionFilter;
 use auralite_dynamics::{
@@ -10,18 +9,31 @@ use auralite_dynamics::{
 use auralite_math::{ABS_EPSILON, Quat, Ray3, Real, Rot2, Vec2, Vec3};
 
 #[derive(Clone, Debug)]
+/// WheelConfig3 struct.
 pub struct WheelConfig3 {
+    /// attachment_point field.
     pub attachment_point: Vec3,
+    /// suspension_direction field.
     pub suspension_direction: Vec3,
+    /// suspension_travel field.
     pub suspension_travel: Real,
+    /// suspension_stiffness function.
     pub suspension_stiffness: Real,
+    /// suspension_damping field.
     pub suspension_damping: Real,
+    /// wheel_radius field.
     pub wheel_radius: Real,
+    /// steered field.
     pub steered: bool,
+    /// driven field.
     pub driven: bool,
+    /// brake_torque field.
     pub brake_torque: Real,
+    /// friction_long field.
     pub friction_long: Real,
+    /// friction_lat field.
     pub friction_lat: Real,
+    /// wheel_mass field.
     pub wheel_mass: Real,
 }
 
@@ -49,22 +61,36 @@ impl Default for WheelConfig3 {
 }
 
 #[derive(Clone, Debug)]
+/// WheelState3 struct.
 pub struct WheelState3 {
+    /// config field.
     pub config: WheelConfig3,
+    /// suspension_length field.
     pub suspension_length: Real,
+    /// prev_suspension_length field.
     pub prev_suspension_length: Real,
+    /// contact_point field.
     pub contact_point: Vec3,
+    /// contact_normal field.
     pub contact_normal: Vec3,
+    /// is_grounded field.
     pub is_grounded: bool,
+    /// steer_angle field.
     pub steer_angle: Real,
+    /// angular_velocity field.
     pub angular_velocity: Real,
+    /// slip_long field.
     pub slip_long: Real,
+    /// slip_lat field.
     pub slip_lat: Real,
+    /// longitudinal_force field.
     pub longitudinal_force: Real,
+    /// lateral_force field.
     pub lateral_force: Real,
 }
 
 impl WheelState3 {
+    /// new function.
     pub fn new(config: WheelConfig3) -> Self {
         Self {
             suspension_length: config.suspension_travel,
@@ -84,21 +110,34 @@ impl WheelState3 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// DifferentialType enum.
 pub enum DifferentialType {
+    /// Open variant.
     Open,
+    /// Locked variant.
     Locked,
+    /// LimitedSlip variant.
     LimitedSlip,
 }
 
 #[derive(Clone, Debug)]
+/// VehicleConfig3 struct.
 pub struct VehicleConfig3 {
+    /// chassis_mass field.
     pub chassis_mass: Real,
+    /// chassis_half_extents field.
     pub chassis_half_extents: Vec3,
+    /// center_of_mass_offset field.
     pub center_of_mass_offset: Vec3,
+    /// max_engine_torque field.
     pub max_engine_torque: Real,
+    /// max_brake_torque field.
     pub max_brake_torque: Real,
+    /// max_steer_angle field.
     pub max_steer_angle: Real,
+    /// steer_speed field.
     pub steer_speed: Real,
+    /// differential_type field.
     pub differential_type: DifferentialType,
 }
 
@@ -125,17 +164,38 @@ impl Default for VehicleConfig3 {
     }
 }
 
+/// Vehicle3 struct.
 pub struct Vehicle3 {
+    /// config field.
     pub config: VehicleConfig3,
+    /// body field.
     pub body: BodyHandle3,
+    /// wheels field.
     pub wheels: Vec<WheelState3>,
+    /// throttle field.
     pub throttle: Real,
+    /// brake field.
     pub brake: Real,
+    /// steer_input field.
     pub steer_input: Real,
+    /// speed field.
     pub speed: Real,
 }
 
 impl Vehicle3 {
+    /// Creates a new 3D vehicle and attaches to world.
+    ///
+    /// # Example
+    /// ```
+    /// use auralite_vehicles::{Vehicle3, VehicleConfig3, WheelConfig3};
+    /// use auralite_dynamics::{World3, BodyBuilder3};
+    /// use auralite_math::{Vec3, Quat};
+    /// let mut world = World3::default();
+    /// world.add_body(BodyBuilder3::static_body()).unwrap();
+    /// let wheels = vec![WheelConfig3::default(); 4];
+    /// let vehicle = Vehicle3::new(VehicleConfig3::default(), Vec3::Y, Quat::identity(), wheels, &mut world);
+    /// assert!(world.body(vehicle.body).is_ok());
+    /// ```
     pub fn new(
         config: VehicleConfig3,
         position: Vec3,
@@ -186,11 +246,13 @@ impl Vehicle3 {
             speed: 0.0,
         }
     }
+    /// set_controls function.
     pub fn set_controls(&mut self, throttle: Real, brake: Real, steer: Real) {
         self.throttle = throttle.clamp(-1.0, 1.0);
         self.brake = brake.clamp(0.0, 1.0);
         self.steer_input = steer.clamp(-1.0, 1.0);
     }
+    /// step function.
     pub fn step(&mut self, dt: Real, world: &mut World3) {
         let chassis = match world.body(self.body) {
             Ok(b) => b.clone(),
@@ -236,13 +298,19 @@ impl Vehicle3 {
     }
 }
 
+/// Vehicle2 struct.
 pub struct Vehicle2 {
+    /// body field.
     pub body: BodyHandle2,
+    /// throttle field.
     pub throttle: Real,
+    /// brake field.
     pub brake: Real,
+    /// speed field.
     pub speed: Real,
 }
 impl Vehicle2 {
+    /// new function.
     pub fn new(position: Vec2, rotation: Rot2, mass: Real, world: &mut World2) -> Self {
         let body = world
             .add_body(
@@ -272,10 +340,12 @@ impl Vehicle2 {
             speed: 0.0,
         }
     }
+    /// set_controls function.
     pub fn set_controls(&mut self, throttle: Real, brake: Real) {
         self.throttle = throttle.clamp(-1.0, 1.0);
         self.brake = brake.clamp(0.0, 1.0);
     }
+    /// step function.
     pub fn step(&mut self, dt: Real, world: &mut World2) {
         let b = match world.body(self.body) {
             Ok(b) => b.clone(),
@@ -288,15 +358,25 @@ impl Vehicle2 {
 }
 
 #[derive(Clone, Debug)]
+/// CharacterConfig2 struct.
 pub struct CharacterConfig2 {
+    /// height field.
     pub height: Real,
+    /// radius field.
     pub radius: Real,
+    /// skin_width field.
     pub skin_width: Real,
+    /// move_speed field.
     pub move_speed: Real,
+    /// acceleration field.
     pub acceleration: Real,
+    /// gravity field.
     pub gravity: Vec2,
+    /// jump_velocity field.
     pub jump_velocity: Real,
+    /// slope_limit field.
     pub slope_limit: Real,
+    /// step_height field.
     pub step_height: Real,
 }
 impl Default for CharacterConfig2 {
@@ -314,16 +394,22 @@ impl Default for CharacterConfig2 {
         }
     }
 }
+/// Character2 struct.
 pub struct Character2 {
+    /// config field.
     pub config: CharacterConfig2,
+    /// position field.
     pub position: Vec2,
+    /// is_grounded field.
     pub is_grounded: bool,
+    /// body field.
     pub body: Option<BodyHandle2>,
     move_input: Vec2,
     want_jump: bool,
     jump_cooldown: Real,
 }
 impl Character2 {
+    /// new function.
     pub fn new(config: CharacterConfig2, position: Vec2) -> Self {
         Self {
             config,
@@ -335,6 +421,7 @@ impl Character2 {
             jump_cooldown: 0.0,
         }
     }
+    /// attach function.
     pub fn attach(&mut self, world: &mut World2) {
         self.body = Some(
             world
@@ -365,12 +452,15 @@ impl Character2 {
                 .unwrap(),
         );
     }
+    /// set_move function.
     pub fn set_move(&mut self, input: Vec2) {
         self.move_input = input;
     }
+    /// jump function.
     pub fn jump(&mut self) {
         self.want_jump = true;
     }
+    /// step function.
     pub fn step(&mut self, dt: Real, world: &mut World2) {
         let body_h = match self.body {
             Some(h) => h,
@@ -424,15 +514,25 @@ impl Character2 {
 }
 
 #[derive(Clone, Debug)]
+/// CharacterConfig3 struct.
 pub struct CharacterConfig3 {
+    /// height field.
     pub height: Real,
+    /// radius field.
     pub radius: Real,
+    /// skin_width field.
     pub skin_width: Real,
+    /// move_speed field.
     pub move_speed: Real,
+    /// acceleration field.
     pub acceleration: Real,
+    /// gravity field.
     pub gravity: Vec3,
+    /// jump_velocity field.
     pub jump_velocity: Real,
+    /// slope_limit field.
     pub slope_limit: Real,
+    /// step_height field.
     pub step_height: Real,
 }
 impl Default for CharacterConfig3 {
@@ -454,16 +554,22 @@ impl Default for CharacterConfig3 {
         }
     }
 }
+/// Character3 struct.
 pub struct Character3 {
+    /// config field.
     pub config: CharacterConfig3,
+    /// position field.
     pub position: Vec3,
+    /// is_grounded field.
     pub is_grounded: bool,
+    /// body field.
     pub body: Option<BodyHandle3>,
     move_input: Vec3,
     want_jump: bool,
     jump_cooldown: Real,
 }
 impl Character3 {
+    /// new function.
     pub fn new(config: CharacterConfig3, position: Vec3) -> Self {
         Self {
             config,
@@ -475,6 +581,7 @@ impl Character3 {
             jump_cooldown: 0.0,
         }
     }
+    /// attach function.
     pub fn attach(&mut self, world: &mut World3) {
         self.body = Some(
             world
@@ -506,12 +613,15 @@ impl Character3 {
                 .unwrap(),
         );
     }
+    /// set_move function.
     pub fn set_move(&mut self, input: Vec3) {
         self.move_input = input;
     }
+    /// jump function.
     pub fn jump(&mut self) {
         self.want_jump = true;
     }
+    /// step function.
     pub fn step(&mut self, dt: Real, world: &mut World3) {
         let body_h = match self.body {
             Some(h) => h,

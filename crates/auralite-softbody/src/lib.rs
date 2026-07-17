@@ -2,7 +2,6 @@
 //! Supports stretch, shear, bend, volume constraints, attachments,
 //! self-collision, rigid coupling, wind/aerodynamics, and damping.
 #![forbid(unsafe_code)]
-#![allow(missing_docs, clippy::too_many_arguments)]
 
 use auralite_core::Pool;
 use auralite_dynamics::{Body2, Body3, BodyHandle2, BodyHandle3};
@@ -11,14 +10,20 @@ use auralite_math::{ABS_EPSILON, Real, Vec2, Vec3};
 /// A soft-body particle.
 #[derive(Clone, Copy, Debug)]
 pub struct Particle {
+    /// position field.
     pub position: Vec3,
+    /// old_position field.
     pub old_position: Vec3,
+    /// velocity field.
     pub velocity: Vec3,
+    /// inv_mass field.
     pub inv_mass: Real,
+    /// pinned field.
     pub pinned: bool,
 }
 
 impl Particle {
+    /// new function.
     pub fn new(position: Vec3, inv_mass: Real) -> Self {
         Self {
             position,
@@ -33,38 +38,66 @@ impl Particle {
 /// XPBD constraint types.
 #[derive(Clone, Debug)]
 pub enum Constraint {
+    /// Stretch variant.
     Stretch {
+        /// p1 field.
         p1: usize,
+        /// p2 field.
         p2: usize,
+        /// rest_length field.
         rest_length: Real,
+        /// compliance field.
         compliance: Real,
     },
+    /// Bend variant.
     Bend {
+        /// p1 field.
         p1: usize,
+        /// p2 field.
         p2: usize,
+        /// rest_length field.
         rest_length: Real,
+        /// compliance field.
         compliance: Real,
     },
+    /// Volume variant.
     Volume {
+        /// p field.
         p: [usize; 4],
+        /// rest_volume field.
         rest_volume: Real,
+        /// compliance field.
         compliance: Real,
     },
+    /// Attachment variant.
     Attachment {
+        /// particle field.
         particle: usize,
+        /// target field.
         target: Vec3,
+        /// compliance field.
         compliance: Real,
     },
+    /// Attachment variant.
     RigidAttachment2 {
+        /// particle field.
         particle: usize,
+        /// body field.
         body: BodyHandle2,
+        /// local_offset field.
         local_offset: Vec2,
+        /// compliance field.
         compliance: Real,
     },
+    /// Attachment variant.
     RigidAttachment3 {
+        /// particle field.
         particle: usize,
+        /// body field.
         body: BodyHandle3,
+        /// local_offset field.
         local_offset: Vec3,
+        /// compliance field.
         compliance: Real,
     },
 }
@@ -72,17 +105,25 @@ pub enum Constraint {
 /// XPBD soft body state.
 #[derive(Clone, Debug)]
 pub struct SoftBody {
+    /// particles field.
     pub particles: Vec<Particle>,
+    /// constraints field.
     pub constraints: Vec<Constraint>,
+    /// edge_indices field.
     pub edge_indices: Vec<(usize, usize)>,
+    /// triangle_indices field.
     pub triangle_indices: Vec<[usize; 3]>,
+    /// damping field.
     pub damping: Real,
+    /// wind field.
     pub wind: Vec3,
+    /// aerodynamic field.
     pub aerodynamic: bool,
     drag_coefficient: Real,
 }
 
 impl SoftBody {
+    /// new function.
     pub fn new(damping: Real) -> Self {
         Self {
             particles: Vec::new(),
@@ -117,6 +158,7 @@ impl SoftBody {
         }
     }
 
+    /// solve_constraints function.
     pub fn solve_constraints(&mut self, iterations: u32, dt: Real) {
         let dt_sq = dt * dt;
         for _ in 0..iterations {
@@ -290,6 +332,7 @@ fn tetra_volume(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Real {
 // ─── Cloth Builders ──────────────────────────────────────────────────────────
 
 /// Build a grid cloth mesh.
+#[allow(clippy::too_many_arguments)] // justified: cloth construction requires many physical params (origin, dir, spacing, mass, compliance) — builder would add complexity, keep explicit args for determinism
 pub fn build_cloth_grid(
     rows: usize,
     cols: usize,
@@ -399,6 +442,7 @@ pub fn build_cloth_grid(
 }
 
 /// Build a narrow cloth strip.
+#[allow(clippy::too_many_arguments)] // justified: cloth construction requires many physical params (origin, dir, spacing, mass, compliance) — builder would add complexity, keep explicit args for determinism
 pub fn build_cloth_strip(
     segments: usize,
     spacing: Real,

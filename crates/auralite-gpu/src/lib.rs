@@ -38,9 +38,13 @@ pub trait GpuBackend {
 /// GPU operation error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuError {
+    /// Backend unavailable.
     BackendUnavailable,
+    /// Shader compilation failed.
     ShaderCompilationFailed,
+    /// Dispatch failed.
     DispatchFailed,
+    /// Readback failed.
     ReadbackFailed,
 }
 

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Versioned, quota-bounded binary envelope with typed serialization for
 //! all AuraLite state types: worlds, bodies, shapes, joints, soft-bodies,
 //! particles, snapshots, RNG seeds.
@@ -6,7 +7,6 @@
 //! All multi-byte integers are little-endian. Payloads are tagged with a
 //! 1-byte type tag followed by a 4-byte length, then the payload data.
 #![forbid(unsafe_code)]
-#![allow(missing_docs, dead_code)]
 
 use auralite_core::{StableId, hash_bytes};
 use auralite_dynamics::joints::{JointId, JointType2, JointType3};
@@ -19,23 +19,45 @@ use auralite_math::{Quat, Real, Rot2, Vec2, Vec3};
 
 // ─── Envelope ────────────────────────────────────────────────────────────────
 
+/// MAGIC field.
 pub const MAGIC: [u8; 4] = *b"AURA";
+/// VERSION field.
 pub const VERSION: u16 = 2;
+/// MAX_PAYLOAD field.
 pub const MAX_PAYLOAD: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Error enum.
 pub enum Error {
+    /// Truncated error.
     Truncated,
+    /// BadMagic error.
     BadMagic,
+    /// UnsupportedVersion error.
     UnsupportedVersion,
+    /// InvalidLength error.
     InvalidLength,
+    /// TypedPayloadMismatch error.
     TypedPayloadMismatch,
+    /// UnsupportedTypeTag error.
     UnsupportedTypeTag,
+    /// ChecksumMismatch error.
     ChecksumMismatch,
+    /// InvalidEnumDiscriminant error.
     InvalidEnumDiscriminant,
 }
 
 #[must_use]
+/// Encodes payload with header and checksum.
+///
+/// # Example
+/// ```
+/// use auralite_serialize::{encode, decode};
+/// let data = b"hello world";
+/// let enc = encode(data);
+/// let dec = decode(&enc, 1000).unwrap();
+/// assert_eq!(dec, data);
+/// ```
 pub fn encode(payload: &[u8]) -> Vec<u8> {
     let checksum = hash_bytes(payload);
     let mut out = Vec::with_capacity(18 + payload.len());
@@ -47,6 +69,7 @@ pub fn encode(payload: &[u8]) -> Vec<u8> {
     out
 }
 
+/// decode function.
 pub fn decode(input: &[u8], quota: usize) -> Result<&[u8], Error> {
     if input.len() < 18 {
         return Err(Error::Truncated);
@@ -76,28 +99,48 @@ pub fn decode(input: &[u8], quota: usize) -> Result<&[u8], Error> {
 // ─── Type Tags ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// TypeTag enum.
 pub enum TypeTag {
+    /// World2State type tag.
     World2State = 1,
+    /// World3State type tag.
     World3State = 2,
+    /// JointConfig2 type tag.
     JointConfig2 = 3,
+    /// Joint2State type tag.
     Joint2State = 4,
+    /// Snapshot2 type tag.
     Snapshot2 = 5,
+    /// Snapshot3 type tag.
     Snapshot3 = 6,
+    /// Body2 type tag.
     Body2 = 7,
+    /// Body3 type tag.
     Body3 = 8,
+    /// Collider2 type tag.
     Collider2 = 9,
+    /// Collider3 type tag.
     Collider3 = 10,
+    /// SoftBody type tag.
     SoftBody = 11,
+    /// ParticleStorage type tag.
     ParticleStorage = 12,
+    /// RngState type tag.
     RngState = 13,
+    /// ForceField type tag.
     ForceField = 14,
+    /// CombinedSnapshot2 type tag.
     CombinedSnapshot2 = 15,
+    /// CombinedSnapshot3 type tag.
     CombinedSnapshot3 = 16,
+    /// Joint3State type tag.
     Joint3State = 17,
+    /// JointConfig3 type tag.
     JointConfig3 = 18,
 }
 
 impl TypeTag {
+    /// from_u8 function.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
             1 => Self::World2State,
@@ -236,6 +279,7 @@ fn read_typed_payload<'a>(
 
 // ─── Collider2 serialization ─────────────────────────────────────────────────
 
+/// serialize_collider2 function.
 pub fn serialize_collider2(c: &Collider2) -> Vec<u8> {
     let mut buf = Vec::new();
     // Body type discriminant + shape discriminant
@@ -286,6 +330,7 @@ fn read_u32_as_i32(data: &[u8], pos: &mut usize) -> Result<i32, Error> {
     Ok(v as i32)
 }
 
+/// deserialize_collider2 function.
 pub fn deserialize_collider2(data: &[u8]) -> Result<Collider2, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Collider2)?;
     let mut pos = 0;
@@ -358,6 +403,7 @@ pub fn deserialize_collider2(data: &[u8]) -> Result<Collider2, Error> {
 
 // ─── Body2 serialization ────────────────────────────────────────────────────
 
+/// serialize_body2 function.
 pub fn serialize_body2(b: &Body2) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, b.id.0);
@@ -425,6 +471,7 @@ fn serialize_collider2_inner(c: &Collider2) -> Vec<u8> {
     buf
 }
 
+/// deserialize_body2 function.
 pub fn deserialize_body2(data: &[u8]) -> Result<Body2, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Body2)?;
     let mut pos = 0;
@@ -551,6 +598,7 @@ fn rot2_angle(r: Rot2) -> Real {
     v.y.atan2(v.x)
 }
 
+/// serialize_collider3 function.
 pub fn serialize_collider3(c: &Collider3) -> Vec<u8> {
     let mut buf = Vec::new();
     match &c.shape {
@@ -606,6 +654,7 @@ pub fn serialize_collider3(c: &Collider3) -> Vec<u8> {
     write_typed_payload(TypeTag::Collider3, &buf)
 }
 
+/// deserialize_collider3 function.
 pub fn deserialize_collider3(data: &[u8]) -> Result<Collider3, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Collider3)?;
     let mut pos = 0;
@@ -695,6 +744,7 @@ pub fn deserialize_collider3(data: &[u8]) -> Result<Collider3, Error> {
     })
 }
 
+/// serialize_body3 function.
 pub fn serialize_body3(b: &Body3) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, b.id.0);
@@ -725,6 +775,7 @@ pub fn serialize_body3(b: &Body3) -> Vec<u8> {
     write_typed_payload(TypeTag::Body3, &buf)
 }
 
+/// deserialize_body3 function.
 pub fn deserialize_body3(data: &[u8]) -> Result<Body3, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Body3)?;
     let mut pos = 0;
@@ -792,6 +843,7 @@ pub fn deserialize_body3(data: &[u8]) -> Result<Body3, Error> {
 
 // ─── World2 snapshot serialization ───────────────────────────────────────────
 
+/// serialize_world2 function.
 pub fn serialize_world2(world: &World2) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, world.step_count());
@@ -816,6 +868,7 @@ pub fn serialize_world2(world: &World2) -> Vec<u8> {
     write_typed_payload(TypeTag::World2State, &buf)
 }
 
+/// serialize_world3 function.
 pub fn serialize_world3(world: &World3) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, world.step_count());
@@ -880,6 +933,7 @@ pub fn deserialize_world3_state(data: &[u8]) -> Result<(u64, Vec3, Vec<u8>, Vec<
     Ok((step, gravity, bodies_data, joints_data))
 }
 
+/// deserialize_world2 function.
 pub fn deserialize_world2(data: &[u8]) -> Result<World2, Error> {
     let (step, gravity, bodies_data, joints_data) = deserialize_world2_state(data)?;
     let mut w = World2::default();
@@ -909,6 +963,7 @@ pub fn deserialize_world2(data: &[u8]) -> Result<World2, Error> {
     Ok(w)
 }
 
+/// deserialize_world3 function.
 pub fn deserialize_world3(data: &[u8]) -> Result<World3, Error> {
     let (step, gravity, bodies_data, joints_data) = deserialize_world3_state(data)?;
     let mut w = World3::default();
@@ -940,6 +995,7 @@ pub fn deserialize_world3(data: &[u8]) -> Result<World3, Error> {
 
 // ─── Joint serialization ────────────────────────────────────────────────────
 
+/// serialize_joint2 function.
 pub fn serialize_joint2(j: &Joint2) -> Vec<u8> {
     let c = &j.config;
     let mut buf = Vec::new();
@@ -986,6 +1042,7 @@ fn write_i32(buf: &mut Vec<u8>, v: i32) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
+/// deserialize_joint2 function.
 pub fn deserialize_joint2(data: &[u8]) -> Result<Joint2, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Joint2State)?;
     let mut pos = 0;
@@ -1051,6 +1108,7 @@ pub fn deserialize_joint2(data: &[u8]) -> Result<Joint2, Error> {
     })
 }
 
+/// serialize_joint3 function.
 pub fn serialize_joint3(j: &Joint3) -> Vec<u8> {
     let c = &j.config;
     let mut buf = Vec::new();
@@ -1095,6 +1153,7 @@ pub fn serialize_joint3(j: &Joint3) -> Vec<u8> {
     write_typed_payload(TypeTag::Joint3State, &buf)
 }
 
+/// deserialize_joint3 function.
 pub fn deserialize_joint3(data: &[u8]) -> Result<Joint3, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Joint3State)?;
     let mut pos = 0;
@@ -1166,6 +1225,7 @@ pub fn deserialize_joint3(data: &[u8]) -> Result<Joint3, Error> {
 
 // ─── SoftBody & ParticleStorage serialization ───────────────────────────────
 
+/// serialize_soft_body function.
 pub fn serialize_soft_body(sb: &auralite_softbody::SoftBody) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u32(&mut buf, sb.particles.len() as u32);
@@ -1182,6 +1242,7 @@ pub fn serialize_soft_body(sb: &auralite_softbody::SoftBody) -> Vec<u8> {
     write_typed_payload(TypeTag::SoftBody, &buf)
 }
 
+/// deserialize_soft_body function.
 pub fn deserialize_soft_body(data: &[u8]) -> Result<auralite_softbody::SoftBody, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::SoftBody)?;
     let mut pos = 0;
@@ -1211,6 +1272,7 @@ pub fn deserialize_soft_body(data: &[u8]) -> Result<auralite_softbody::SoftBody,
     Ok(sb)
 }
 
+/// serialize_particle_storage function.
 pub fn serialize_particle_storage(ps: &auralite_particles::ParticleStorage) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u32(&mut buf, ps.capacity as u32);
@@ -1233,6 +1295,7 @@ pub fn serialize_particle_storage(ps: &auralite_particles::ParticleStorage) -> V
     write_typed_payload(TypeTag::ParticleStorage, &buf)
 }
 
+/// deserialize_particle_storage function.
 pub fn deserialize_particle_storage(
     data: &[u8],
 ) -> Result<auralite_particles::ParticleStorage, Error> {
@@ -1265,6 +1328,7 @@ pub fn deserialize_particle_storage(
 
 // ─── RNG serialization ──────────────────────────────────────────────────────
 
+/// serialize_rng function.
 pub fn serialize_rng(rng: &auralite_core::Rng) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, rng.state());

@@ -10,7 +10,9 @@
 #[cfg(not(any(feature = "multithread", feature = "single-thread")))]
 compile_error!("auralite-dynamics requires either the 'multithread' or 'single-thread' feature");
 
+/// item.
 pub mod joints;
+pub mod lockstep;
 use auralite_collision::{
     CollisionFilter, DynamicTree2, DynamicTree3, FeatureId, Manifold2, Manifold3, PairDecision,
 };
@@ -20,28 +22,42 @@ use auralite_geometry::{
     TriangleMesh,
 };
 use auralite_math::{ABS_EPSILON, CONTACT_SLOP, Quat, Ray2, Ray3, Real, Rot2, Vec2, Vec3};
+/// item.
 pub use joints::{
     Joint2, Joint3, JointBreakEvent, JointConfig2, JointConfig3, JointId, JointLimits, JointMotor,
     JointType2, JointType3,
 };
+pub use lockstep::{InputEvent, InputRecorder};
 use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// BodyType enumeration.
 pub enum BodyType {
+    /// Static variant.
     Static,
+    /// Kinematic variant.
     Kinematic,
+    /// Dynamic variant.
     Dynamic,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// WorldError enumeration.
 pub enum WorldError {
+    /// InvalidInput variant.
     InvalidInput,
+    /// StaleHandle variant.
     StaleHandle,
+    /// Internal variant.
     Internal,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Material — represents material in the dynamics system.
 pub struct Material {
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// density field.
     pub density: Real,
 }
 impl Default for Material {
@@ -54,14 +70,21 @@ impl Default for Material {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
+/// CombineMode enumeration.
 pub enum CombineMode {
+    /// Multiply variant.
     Multiply,
     #[default]
+    /// Average variant.
     Average,
+    /// Min variant.
     Min,
+    /// Max variant.
     Max,
+    /// First variant.
     First,
 }
+/// combine — performs combine operation.
 pub fn combine(a: Real, b: Real, mode: CombineMode) -> Real {
     match mode {
         CombineMode::Multiply => a * b,
@@ -73,21 +96,33 @@ pub fn combine(a: Real, b: Real, mode: CombineMode) -> Real {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Collider2 — represents collider2 in the dynamics system.
 pub struct Collider2 {
+    /// shape field.
     pub shape: ColliderShape2,
+    /// offset field.
     pub offset: Vec2,
+    /// material field.
     pub material: Material,
+    /// filter field.
     pub filter: CollisionFilter,
 }
 #[derive(Clone, Debug, PartialEq)]
+/// ColliderShape2 enumeration.
 pub enum ColliderShape2 {
+    /// Circle variant.
     Circle(Circle2),
+    /// Box variant.
     Box(Box2),
+    /// Capsule variant.
     Capsule(Capsule2),
+    /// ConvexPolygon variant.
     ConvexPolygon(ConvexPolygon),
+    /// Edge variant.
     Edge(Edge2),
 }
 impl ColliderShape2 {
+    /// ray_intersection — performs ray intersection operation.
     pub fn ray_intersection(&self, r: Ray2) -> Option<(Real, Vec2)> {
         match self {
             ColliderShape2::Circle(c) => c.ray_intersection(r),
@@ -100,6 +135,7 @@ impl ColliderShape2 {
 }
 impl Collider2 {
     #[must_use]
+    /// world_aabb — performs world aabb operation.
     pub fn world_aabb(&self, body_pos: Vec2, body_rot: Rot2) -> auralite_math::Aabb2 {
         let world_center = body_pos + body_rot.rotate(self.offset);
         let r = self.bounding_radius();
@@ -108,6 +144,7 @@ impl Collider2 {
             .unwrap_or_else(|_| auralite_math::Aabb2::new(world_center, world_center).unwrap())
     }
     #[must_use]
+    /// bounding_radius — performs bounding radius operation.
     pub fn bounding_radius(&self) -> Real {
         (match &self.shape {
             ColliderShape2::Circle(c) => c.radius(),
@@ -119,22 +156,35 @@ impl Collider2 {
     }
 }
 #[derive(Clone, Debug, PartialEq)]
+/// Collider3 — represents collider3 in the dynamics system.
 pub struct Collider3 {
+    /// shape field.
     pub shape: ColliderShape3,
+    /// offset field.
     pub offset: Vec3,
+    /// material field.
     pub material: Material,
+    /// filter field.
     pub filter: CollisionFilter,
 }
 #[derive(Clone, Debug, PartialEq)]
+/// ColliderShape3 enumeration.
 pub enum ColliderShape3 {
+    /// Sphere variant.
     Sphere(Sphere3),
+    /// Box variant.
     Box(Box3),
+    /// Capsule variant.
     Capsule(Capsule3),
+    /// ConvexHull variant.
     ConvexHull(ConvexHull3),
+    /// TriangleMesh variant.
     TriangleMesh(TriangleMesh),
+    /// Edge variant.
     Edge(Edge3),
 }
 impl ColliderShape3 {
+    /// support — performs support operation.
     pub fn support(&self, direction: Vec3) -> Vec3 {
         match self {
             ColliderShape3::Sphere(s) => s.support(direction),
@@ -145,6 +195,7 @@ impl ColliderShape3 {
             ColliderShape3::TriangleMesh(_) => Vec3::ZERO,
         }
     }
+    /// ray_intersection — performs ray intersection operation.
     pub fn ray_intersection(&self, r: Ray3) -> Option<(Real, Vec3)> {
         match self {
             ColliderShape3::Sphere(s) => s.ray_intersection(r),
@@ -155,6 +206,7 @@ impl ColliderShape3 {
             ColliderShape3::Edge(e) => e.ray_intersection(r),
         }
     }
+    /// volume — performs volume operation.
     pub fn volume(&self) -> Real {
         match self {
             ColliderShape3::Sphere(s) => s.volume(),
@@ -167,6 +219,7 @@ impl ColliderShape3 {
 }
 impl Collider3 {
     #[must_use]
+    /// world_aabb — performs world aabb operation.
     pub fn world_aabb(&self, body_pos: Vec3, body_rot: Quat) -> auralite_math::Aabb3 {
         let world_center = body_pos + body_rot.rotate(self.offset);
         let r = self.bounding_radius();
@@ -175,6 +228,7 @@ impl Collider3 {
             .unwrap_or_else(|_| auralite_math::Aabb3::new(world_center, world_center).unwrap())
     }
     #[must_use]
+    /// bounding_radius — performs bounding radius operation.
     pub fn bounding_radius(&self) -> Real {
         (match &self.shape {
             ColliderShape3::Sphere(s) => s.radius(),
@@ -188,27 +242,46 @@ impl Collider3 {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Body2 — represents body2 in the dynamics system.
 pub struct Body2 {
+    /// id field.
     pub id: StableId,
+    /// kind field.
     pub kind: BodyType,
+    /// position field.
     pub position: Vec2,
+    /// rotation field.
     pub rotation: Rot2,
+    /// velocity field.
     pub velocity: Vec2,
+    /// angular_velocity field.
     pub angular_velocity: Real,
+    /// inv_mass field.
     pub inv_mass: Real,
+    /// inv_inertia field.
     pub inv_inertia: Real,
+    /// colliders field.
     pub colliders: Vec<Collider2>,
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// sleeping field.
     pub sleeping: bool,
+    /// force field.
     pub force: Vec2,
+    /// torque field.
     pub torque: Real,
+    /// linear_damping field.
     pub linear_damping: Real,
+    /// angular_damping field.
     pub angular_damping: Real,
+    /// user_data field.
     pub user_data: u64,
 }
 impl Body2 {
     #[must_use]
+    /// world_aabb — performs world aabb operation.
     pub fn world_aabb(&self) -> auralite_math::Aabb2 {
         if self.colliders.is_empty() {
             return auralite_math::Aabb2::new(self.position, self.position).unwrap();
@@ -231,6 +304,7 @@ impl Body2 {
         auralite_math::Aabb2::new(min, max).unwrap()
     }
     #[must_use]
+    /// effective_inv_mass — performs effective inv mass operation.
     pub fn effective_inv_mass(&self) -> Real {
         if self.kind == BodyType::Dynamic {
             self.inv_mass
@@ -239,6 +313,7 @@ impl Body2 {
         }
     }
     #[must_use]
+    /// effective_inv_inertia — performs effective inv inertia operation.
     pub fn effective_inv_inertia(&self) -> Real {
         if self.kind == BodyType::Dynamic {
             self.inv_inertia
@@ -246,6 +321,7 @@ impl Body2 {
             0.0
         }
     }
+    /// apply_impulse — performs apply impulse operation.
     pub fn apply_impulse(&mut self, impulse: Vec2, point: Vec2) {
         if self.kind != BodyType::Dynamic || self.sleeping {
             return;
@@ -256,27 +332,46 @@ impl Body2 {
     }
 }
 #[derive(Clone, Debug, PartialEq)]
+/// Body3 — represents body3 in the dynamics system.
 pub struct Body3 {
+    /// id field.
     pub id: StableId,
+    /// kind field.
     pub kind: BodyType,
+    /// position field.
     pub position: Vec3,
+    /// rotation field.
     pub rotation: Quat,
+    /// velocity field.
     pub velocity: Vec3,
+    /// angular_velocity field.
     pub angular_velocity: Vec3,
+    /// inv_mass field.
     pub inv_mass: Real,
+    /// inv_inertia_diagonal field.
     pub inv_inertia_diagonal: Vec3,
+    /// colliders field.
     pub colliders: Vec<Collider3>,
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// sleeping field.
     pub sleeping: bool,
+    /// force field.
     pub force: Vec3,
+    /// torque field.
     pub torque: Vec3,
+    /// linear_damping field.
     pub linear_damping: Real,
+    /// angular_damping field.
     pub angular_damping: Real,
+    /// user_data field.
     pub user_data: u64,
 }
 impl Body3 {
     #[must_use]
+    /// world_aabb — performs world aabb operation.
     pub fn world_aabb(&self) -> auralite_math::Aabb3 {
         if self.colliders.is_empty() {
             return auralite_math::Aabb3::new(self.position, self.position).unwrap();
@@ -303,6 +398,7 @@ impl Body3 {
         auralite_math::Aabb3::new(min, max).unwrap()
     }
     #[must_use]
+    /// effective_inv_mass — performs effective inv mass operation.
     pub fn effective_inv_mass(&self) -> Real {
         if self.kind == BodyType::Dynamic {
             self.inv_mass
@@ -310,6 +406,7 @@ impl Body3 {
             0.0
         }
     }
+    /// apply_impulse — performs apply impulse operation.
     pub fn apply_impulse(&mut self, impulse: Vec3, point: Vec3) {
         if self.kind != BodyType::Dynamic || self.sleeping {
             return;
@@ -323,9 +420,13 @@ impl Body3 {
     }
 }
 
+/// Type alias for BodyHandle2.
 pub type BodyHandle2 = Handle<Body2>;
+/// Type alias for BodyHandle3.
 pub type BodyHandle3 = Handle<Body3>;
+/// Type alias for ColliderHandle2.
 pub type ColliderHandle2 = Handle<Collider2>;
+/// Type alias for ColliderHandle3.
 pub type ColliderHandle3 = Handle<Collider3>;
 pub(crate) fn apply_impulse2(
     pool: &mut Pool<Body2>,
@@ -367,24 +468,39 @@ pub(crate) fn apply_impulse3(
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyBuilder2 {
+    /// kind field.
     pub kind: BodyType,
+    /// position field.
     pub position: Vec2,
+    /// rotation field.
     pub rotation: Rot2,
+    /// velocity field.
     pub velocity: Vec2,
+    /// angular_velocity field.
     pub angular_velocity: Real,
+    /// mass field.
     pub mass: Real,
+    /// inertia field.
     pub inertia: Option<Real>,
+    /// colliders field.
     pub colliders: Vec<Collider2>,
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// linear_damping field.
     pub linear_damping: Real,
+    /// angular_damping field.
     pub angular_damping: Real,
+    /// user_data field.
     pub user_data: u64,
 }
 impl BodyBuilder2 {
+    /// new — performs new operation.
     pub fn new() -> Self {
         Self::dynamic()
     }
+    /// dynamic — performs dynamic operation.
     pub fn dynamic() -> Self {
         Self {
             kind: BodyType::Dynamic,
@@ -402,55 +518,68 @@ impl BodyBuilder2 {
             user_data: 0,
         }
     }
+    /// static_body — performs static body operation.
     pub fn static_body() -> Self {
         let mut b = Self::dynamic();
         b.kind = BodyType::Static;
         b
     }
+    /// position — performs position operation.
     pub fn position(mut self, v: Vec2) -> Self {
         self.position = v;
         self
     }
+    /// rotation — performs rotation operation.
     pub fn rotation(mut self, r: Rot2) -> Self {
         self.rotation = r;
         self
     }
+    /// velocity — performs velocity operation.
     pub fn velocity(mut self, v: Vec2) -> Self {
         self.velocity = v;
         self
     }
+    /// mass — performs mass operation.
     pub fn mass(mut self, v: Real) -> Self {
         self.mass = v;
         self
     }
+    /// restitution — performs restitution operation.
     pub fn restitution(mut self, v: Real) -> Self {
         self.restitution = v;
         self
     }
+    /// inertia — performs inertia operation.
     pub fn inertia(mut self, i: Real) -> Self {
         self.inertia = Some(i);
         self
     }
+    /// add_collider — performs add collider operation.
     pub fn add_collider(mut self, c: Collider2) -> Self {
         self.colliders.push(c);
         self
     }
+    /// angular_velocity — performs angular velocity operation.
     pub fn angular_velocity(mut self, v: Real) -> Self {
         self.angular_velocity = v;
         self
     }
+    /// friction — performs friction operation.
     pub fn friction(mut self, v: Real) -> Self {
         self.friction = v;
         self
     }
+    /// linear_damping — performs linear damping operation.
     pub fn linear_damping(mut self, v: Real) -> Self {
         self.linear_damping = v;
         self
     }
+    /// angular_damping — performs angular damping operation.
     pub fn angular_damping(mut self, v: Real) -> Self {
         self.angular_damping = v;
         self
     }
+    /// user_data — performs user data operation.
     pub fn user_data(mut self, v: u64) -> Self {
         self.user_data = v;
         self
@@ -472,24 +601,39 @@ impl Default for BodyBuilder2 {
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyBuilder3 {
+    /// kind field.
     pub kind: BodyType,
+    /// position field.
     pub position: Vec3,
+    /// rotation field.
     pub rotation: Quat,
+    /// velocity field.
     pub velocity: Vec3,
+    /// angular_velocity field.
     pub angular_velocity: Vec3,
+    /// mass field.
     pub mass: Real,
+    /// inertia_diagonal field.
     pub inertia_diagonal: Option<Vec3>,
+    /// colliders field.
     pub colliders: Vec<Collider3>,
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// linear_damping field.
     pub linear_damping: Real,
+    /// angular_damping field.
     pub angular_damping: Real,
+    /// user_data field.
     pub user_data: u64,
 }
 impl BodyBuilder3 {
+    /// new — performs new operation.
     pub fn new() -> Self {
         Self::dynamic()
     }
+    /// dynamic — performs dynamic operation.
     pub fn dynamic() -> Self {
         Self {
             kind: BodyType::Dynamic,
@@ -507,55 +651,68 @@ impl BodyBuilder3 {
             user_data: 0,
         }
     }
+    /// static_body — performs static body operation.
     pub fn static_body() -> Self {
         let mut b = Self::dynamic();
         b.kind = BodyType::Static;
         b
     }
+    /// position — performs position operation.
     pub fn position(mut self, v: Vec3) -> Self {
         self.position = v;
         self
     }
+    /// rotation — performs rotation operation.
     pub fn rotation(mut self, r: Quat) -> Self {
         self.rotation = r;
         self
     }
+    /// mass — performs mass operation.
     pub fn mass(mut self, v: Real) -> Self {
         self.mass = v;
         self
     }
+    /// inertia_diagonal — performs inertia diagonal operation.
     pub fn inertia_diagonal(mut self, i: Vec3) -> Self {
         self.inertia_diagonal = Some(i);
         self
     }
+    /// add_collider — performs add collider operation.
     pub fn add_collider(mut self, c: Collider3) -> Self {
         self.colliders.push(c);
         self
     }
+    /// velocity — performs velocity operation.
     pub fn velocity(mut self, v: Vec3) -> Self {
         self.velocity = v;
         self
     }
+    /// angular_velocity — performs angular velocity operation.
     pub fn angular_velocity(mut self, v: Vec3) -> Self {
         self.angular_velocity = v;
         self
     }
+    /// restitution — performs restitution operation.
     pub fn restitution(mut self, v: Real) -> Self {
         self.restitution = v;
         self
     }
+    /// friction — performs friction operation.
     pub fn friction(mut self, v: Real) -> Self {
         self.friction = v;
         self
     }
+    /// linear_damping — performs linear damping operation.
     pub fn linear_damping(mut self, v: Real) -> Self {
         self.linear_damping = v;
         self
     }
+    /// angular_damping — performs angular damping operation.
     pub fn angular_damping(mut self, v: Real) -> Self {
         self.angular_damping = v;
         self
     }
+    /// user_data — performs user data operation.
     pub fn user_data(mut self, v: u64) -> Self {
         self.user_data = v;
         self
@@ -568,20 +725,35 @@ impl Default for BodyBuilder3 {
 }
 
 #[derive(Clone, Debug)]
+/// ContactConstraint2 — represents contactconstraint2 in the dynamics system.
 pub struct ContactConstraint2 {
+    /// body_a field.
     pub body_a: BodyHandle2,
+    /// body_b field.
     pub body_b: BodyHandle2,
+    /// normal field.
     pub normal: Vec2,
+    /// tangent field.
     pub tangent: Vec2,
+    /// point field.
     pub point: Vec2,
+    /// penetration field.
     pub penetration: Real,
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// normal_impulse field.
     pub normal_impulse: Real,
+    /// tangent_impulse field.
     pub tangent_impulse: Real,
+    /// feature_id field.
     pub feature_id: FeatureId,
+    /// effective_mass_normal field.
     pub effective_mass_normal: Real,
+    /// effective_mass_tangent field.
     pub effective_mass_tangent: Real,
+    /// bias field.
     pub bias: Real,
 }
 impl ContactConstraint2 {
@@ -711,23 +883,41 @@ fn solve_contacts_2d_once(constraints: &mut [ContactConstraint2], bodies: &mut P
 }
 
 #[derive(Clone, Debug)]
+/// ContactConstraint3 — represents contactconstraint3 in the dynamics system.
 pub struct ContactConstraint3 {
+    /// body_a field.
     pub body_a: BodyHandle3,
+    /// body_b field.
     pub body_b: BodyHandle3,
+    /// normal field.
     pub normal: Vec3,
+    /// tangent1 field.
     pub tangent1: Vec3,
+    /// tangent2 field.
     pub tangent2: Vec3,
+    /// point field.
     pub point: Vec3,
+    /// penetration field.
     pub penetration: Real,
+    /// restitution field.
     pub restitution: Real,
+    /// friction field.
     pub friction: Real,
+    /// normal_impulse field.
     pub normal_impulse: Real,
+    /// tangent1_impulse field.
     pub tangent1_impulse: Real,
+    /// tangent2_impulse field.
     pub tangent2_impulse: Real,
+    /// feature_id field.
     pub feature_id: FeatureId,
+    /// effective_mass_normal field.
     pub effective_mass_normal: Real,
+    /// effective_mass_tangent1 field.
     pub effective_mass_tangent1: Real,
+    /// effective_mass_tangent2 field.
     pub effective_mass_tangent2: Real,
+    /// bias field.
     pub bias: Real,
 }
 
@@ -895,12 +1085,18 @@ fn solve_contacts_3d_once(constraints: &mut [ContactConstraint3], bodies: &mut P
     }
 }
 
+/// Snapshot2 — represents snapshot2 in the dynamics system.
 pub struct Snapshot2 {
+    /// states field.
     pub states: Vec<(u64, Vec2, Rot2, Vec2, Real, Real, Real, bool)>,
+    /// step field.
     pub step: u64,
 }
+/// Snapshot3 — represents snapshot3 in the dynamics system.
 pub struct Snapshot3 {
+    /// states field.
     pub states: Vec<(u64, Vec3, Quat, Vec3, Vec3, Real, Vec3, bool)>,
+    /// step field.
     pub step: u64,
 }
 /// Sensor event — begin/stay/end per step in deterministic order.
@@ -952,14 +1148,21 @@ pub struct World2 {
     next_id: u64,
     step: u64,
     dynamic_tree: DynamicTree2,
+    /// solver_iterations field.
     pub solver_iterations: u16,
+    /// sleep_threshold field.
     pub sleep_threshold: Real,
+    /// restitution_mode field.
     pub restitution_mode: CombineMode,
+    /// friction_mode field.
     pub friction_mode: CombineMode,
     prev_manifolds: Vec<Manifold2>,
     prev_sensor_pairs: Vec<(u64, u64)>,
+    /// sensor_events field.
     pub sensor_events: VecDeque<SensorEvent>,
+    /// joints field.
     pub joints: Vec<Joint2>,
+    /// joint_break_events field.
     pub joint_break_events: VecDeque<JointBreakEvent>,
     scratch_pairs: Vec<(u64, u64)>,
     scratch_handles: Vec<BodyHandle2>,
@@ -1078,6 +1281,7 @@ fn process_chunk2(task: &mut PairChunkTask2) {
 }
 
 impl World2 {
+    /// step — performs step operation.
     pub fn step(&mut self, dt: Real) -> Result<(), WorldError> {
         #[cfg(feature = "multithread")]
         {
@@ -1089,6 +1293,7 @@ impl World2 {
         }
     }
 
+    /// step_with_scheduler — performs step with scheduler operation.
     pub fn step_with_scheduler(
         &mut self,
         dt: Real,
@@ -1287,6 +1492,7 @@ impl World2 {
         self.step += 1;
         Ok(())
     }
+    /// add_body — performs add body operation.
     pub fn add_body(&mut self, b: BodyBuilder2) -> Result<BodyHandle2, WorldError> {
         let id = StableId(self.next_id);
         self.next_id += 1;
@@ -1318,24 +1524,30 @@ impl World2 {
             user_data: b.user_data,
         }))
     }
+    /// body — performs body operation.
     pub fn body(&self, h: BodyHandle2) -> Result<&Body2, WorldError> {
         self.bodies.get(h).ok_or(WorldError::StaleHandle)
     }
+    /// body_mut — performs body mut operation.
     pub fn body_mut(&mut self, h: BodyHandle2) -> Result<&mut Body2, WorldError> {
         self.bodies.get_mut(h).ok_or(WorldError::StaleHandle)
     }
+    /// add_joint — performs add joint operation.
     pub fn add_joint(&mut self, config: JointConfig2) -> Result<JointId, WorldError> {
         let id = JointId(self.next_id);
         self.next_id += 1;
         self.joints.push(Joint2::new(id, config));
         Ok(id)
     }
+    /// joint — performs joint operation.
     pub fn joint(&self, id: JointId) -> Option<&Joint2> {
         self.joints.iter().find(|j| j.id == id)
     }
+    /// remove_body — performs remove body operation.
     pub fn remove_body(&mut self, h: BodyHandle2) -> Result<Body2, WorldError> {
         self.bodies.remove(h).ok_or(WorldError::StaleHandle)
     }
+    /// apply_force — performs apply force operation.
     pub fn apply_force(&mut self, h: BodyHandle2, f: Vec2) -> Result<(), WorldError> {
         if let Some(b) = self.bodies.get_mut(h) {
             b.force += f;
@@ -1343,6 +1555,7 @@ impl World2 {
         }
         Ok(())
     }
+    /// apply_impulse — performs apply impulse operation.
     pub fn apply_impulse(&mut self, h: BodyHandle2, j: Vec2) -> Result<(), WorldError> {
         if let Some(b) = self.bodies.get_mut(h) {
             b.velocity += j * b.inv_mass;
@@ -1350,6 +1563,7 @@ impl World2 {
         }
         Ok(())
     }
+    /// state_hash — performs state hash operation.
     pub fn state_hash(&self) -> u64 {
         let mut b = Vec::new();
         b.extend_from_slice(&self.step.to_le_bytes());
@@ -1366,12 +1580,14 @@ impl World2 {
         }
         hash_bytes(&b)
     }
+    /// wake_body — performs wake body operation.
     pub fn wake_body(&mut self, h: BodyHandle2) -> Result<(), WorldError> {
         if let Some(b) = self.bodies.get_mut(h) {
             b.sleeping = false;
         }
         Ok(())
     }
+    /// snapshot — performs snapshot operation.
     pub fn snapshot(&self) -> Snapshot2 {
         Snapshot2 {
             states: self
@@ -1393,6 +1609,7 @@ impl World2 {
             step: self.step,
         }
     }
+    /// restore — performs restore operation.
     pub fn restore(&mut self, s: &Snapshot2) -> Result<(), WorldError> {
         self.step = s.step;
         for (_, b) in self.bodies.iter_mut() {
@@ -1408,40 +1625,50 @@ impl World2 {
         }
         Ok(())
     }
+    /// body_handles — performs body handles operation.
     pub fn body_handles(&self) -> Vec<BodyHandle2> {
         self.bodies.iter().map(|(h, _)| h).collect()
     }
+    /// body_count — performs body count operation.
     pub fn body_count(&self) -> usize {
         self.bodies.len()
     }
+    /// step_count — performs step count operation.
     pub fn step_count(&self) -> u64 {
         self.step
     }
+    /// set_gravity — performs set gravity operation.
     pub fn set_gravity(&mut self, g: Vec2) -> Result<(), WorldError> {
         self.gravity = g;
         Ok(())
     }
+    /// gravity — performs gravity operation.
     pub fn gravity(&self) -> Vec2 {
         self.gravity
     }
+    /// bodies_iter — performs bodies iter operation.
     pub fn bodies_iter(&self) -> impl Iterator<Item = (BodyHandle2, &Body2)> {
         self.bodies.iter()
     }
+    /// set_step_count — performs set step count operation.
     pub fn set_step_count(&mut self, step: u64) {
         self.step = step;
     }
+    /// insert_restored_body — performs insert restored body operation.
     pub fn insert_restored_body(&mut self, body: Body2) -> BodyHandle2 {
         if body.id.0 >= self.next_id {
             self.next_id = body.id.0 + 1;
         }
         self.bodies.insert(body)
     }
+    /// rebuild_tree — performs rebuild tree operation.
     pub fn rebuild_tree(&mut self) {
         self.dynamic_tree = DynamicTree2::new(0.02, 1.0 / 60.0).unwrap();
         for (_, b) in self.bodies.iter() {
             self.dynamic_tree.update(b.id.0, b.world_aabb(), b.velocity);
         }
     }
+    /// serialize_bodies — performs serialize bodies operation.
     pub fn serialize_bodies(&self) -> Vec<u8> {
         let mut b = Vec::new();
         for (_, body) in self.bodies.iter() {
@@ -1461,6 +1688,7 @@ impl World2 {
         }
         b
     }
+    /// serialize_joints — performs serialize joints operation.
     pub fn serialize_joints(&self) -> Vec<u8> {
         let mut b = Vec::new();
         b.extend_from_slice(&(self.joints.len() as u32).to_le_bytes());
@@ -1483,9 +1711,11 @@ impl World2 {
         }
         b
     }
+    /// ray_cast — performs ray cast operation.
     pub fn ray_cast(&self, ray: Ray2, max_t: Real) -> Option<(BodyHandle2, Real, Vec2)> {
         self.ray_cast_ignoring(ray, max_t, BodyHandle2::new(u32::MAX, u32::MAX))
     }
+    /// ray_cast_ignoring — performs ray cast ignoring operation.
     pub fn ray_cast_ignoring(
         &self,
         ray: Ray2,
@@ -1540,9 +1770,13 @@ pub struct World3 {
     next_id: u64,
     step: u64,
     dynamic_tree: DynamicTree3,
+    /// solver_iterations field.
     pub solver_iterations: u16,
+    /// sleep_threshold field.
     pub sleep_threshold: Real,
+    /// joints field.
     pub joints: Vec<Joint3>,
+    /// prev_manifolds field.
     pub prev_manifolds: Vec<Manifold3>,
 }
 impl Default for World3 {
@@ -1609,6 +1843,7 @@ fn process_chunk3(task: &mut PairChunkTask3) {
 }
 
 impl World3 {
+    /// step — performs step operation.
     pub fn step(&mut self, dt: Real) -> Result<(), WorldError> {
         #[cfg(feature = "multithread")]
         {
@@ -1620,6 +1855,7 @@ impl World3 {
         }
     }
 
+    /// step_with_scheduler — performs step with scheduler operation.
     pub fn step_with_scheduler(
         &mut self,
         dt: Real,
@@ -1755,6 +1991,7 @@ impl World3 {
         self.step += 1;
         Ok(())
     }
+    /// add_body — performs add body operation.
     pub fn add_body(&mut self, b: BodyBuilder3) -> Result<BodyHandle3, WorldError> {
         let id = StableId(self.next_id);
         self.next_id += 1;
@@ -1786,43 +2023,54 @@ impl World3 {
             user_data: b.user_data,
         }))
     }
+    /// body — performs body operation.
     pub fn body(&self, h: BodyHandle3) -> Result<&Body3, WorldError> {
         self.bodies.get(h).ok_or(WorldError::StaleHandle)
     }
+    /// body_handles — performs body handles operation.
     pub fn body_handles(&self) -> Vec<BodyHandle3> {
         self.bodies.iter().map(|(h, _)| h).collect()
     }
+    /// body_count — performs body count operation.
     pub fn body_count(&self) -> usize {
         self.bodies.len()
     }
+    /// step_count — performs step count operation.
     pub fn step_count(&self) -> u64 {
         self.step
     }
+    /// gravity — performs gravity operation.
     pub fn gravity(&self) -> Vec3 {
         self.gravity
     }
+    /// bodies_iter — performs bodies iter operation.
     pub fn bodies_iter(&self) -> impl Iterator<Item = (BodyHandle3, &Body3)> {
         self.bodies.iter()
     }
+    /// set_gravity — performs set gravity operation.
     pub fn set_gravity(&mut self, g: Vec3) -> Result<(), WorldError> {
         self.gravity = g;
         Ok(())
     }
+    /// set_step_count — performs set step count operation.
     pub fn set_step_count(&mut self, step: u64) {
         self.step = step;
     }
+    /// insert_restored_body — performs insert restored body operation.
     pub fn insert_restored_body(&mut self, body: Body3) -> BodyHandle3 {
         if body.id.0 >= self.next_id {
             self.next_id = body.id.0 + 1;
         }
         self.bodies.insert(body)
     }
+    /// rebuild_tree — performs rebuild tree operation.
     pub fn rebuild_tree(&mut self) {
         self.dynamic_tree = DynamicTree3::new(0.02, 1.0 / 60.0).unwrap();
         for (_, b) in self.bodies.iter() {
             self.dynamic_tree.update(b.id.0, b.world_aabb(), b.velocity);
         }
     }
+    /// snapshot — performs snapshot operation.
     pub fn snapshot(&self) -> Snapshot3 {
         Snapshot3 {
             states: self
@@ -1844,6 +2092,7 @@ impl World3 {
             step: self.step,
         }
     }
+    /// restore — performs restore operation.
     pub fn restore(&mut self, s: &Snapshot3) -> Result<(), WorldError> {
         self.step = s.step;
         for (_, b) in self.bodies.iter_mut() {
@@ -1859,6 +2108,7 @@ impl World3 {
         }
         Ok(())
     }
+    /// state_hash — performs state hash operation.
     pub fn state_hash(&self) -> u64 {
         let mut b = Vec::new();
         b.extend_from_slice(&self.step.to_le_bytes());
@@ -1882,27 +2132,33 @@ impl World3 {
         }
         hash_bytes(&b)
     }
+    /// add_joint — performs add joint operation.
     pub fn add_joint(&mut self, config: JointConfig3) -> Result<JointId, WorldError> {
         let id = JointId(self.next_id);
         self.next_id += 1;
         self.joints.push(Joint3::new(id, config));
         Ok(id)
     }
+    /// joint — performs joint operation.
     pub fn joint(&self, id: JointId) -> Option<&Joint3> {
         self.joints.iter().find(|j| j.id == id)
     }
+    /// remove_joint — performs remove joint operation.
     pub fn remove_joint(&mut self, id: JointId) {
         self.joints.retain(|j| j.id != id);
     }
+    /// remove_body — performs remove body operation.
     pub fn remove_body(&mut self, h: BodyHandle3) -> Result<Body3, WorldError> {
         self.bodies.remove(h).ok_or(WorldError::StaleHandle)
     }
+    /// apply_force — performs apply force operation.
     pub fn apply_force(&mut self, h: BodyHandle3, f: Vec3) -> Result<(), WorldError> {
         if let Some(b) = self.bodies.get_mut(h) {
             b.force += f;
         }
         Ok(())
     }
+    /// apply_impulse — performs apply impulse operation.
     pub fn apply_impulse(&mut self, h: BodyHandle3, j: Vec3) -> Result<(), WorldError> {
         if let Some(b) = self.bodies.get_mut(h) {
             b.velocity += j * b.inv_mass;
@@ -1910,6 +2166,7 @@ impl World3 {
         }
         Ok(())
     }
+    /// apply_impulse_at_point — performs apply impulse at point operation.
     pub fn apply_impulse_at_point(
         &mut self,
         h: BodyHandle3,
@@ -1922,6 +2179,7 @@ impl World3 {
         }
         Ok(())
     }
+    /// serialize_bodies — performs serialize bodies operation.
     pub fn serialize_bodies(&self) -> Vec<u8> {
         let mut b = Vec::new();
         for (_, body) in self.bodies.iter() {
@@ -1938,12 +2196,15 @@ impl World3 {
         }
         b
     }
+    /// serialize_joints — performs serialize joints operation.
     pub fn serialize_joints(&self) -> Vec<u8> {
         Vec::new()
     }
+    /// ray_cast — performs ray cast operation.
     pub fn ray_cast(&self, ray: Ray3, max_t: Real) -> Option<(BodyHandle3, Real, Vec3)> {
         self.ray_cast_ignoring(ray, max_t, BodyHandle3::new(u32::MAX, u32::MAX))
     }
+    /// ray_cast_ignoring — performs ray cast ignoring operation.
     pub fn ray_cast_ignoring(
         &self,
         ray: Ray3,

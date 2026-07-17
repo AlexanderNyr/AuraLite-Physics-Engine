@@ -128,8 +128,23 @@ dependencies = [
 name = "auralite-ffi"
 version = "0.1.0"
 dependencies = [
+ "auralite-collision",
+ "auralite-core",
  "auralite-dynamics",
+ "auralite-geometry",
  "auralite-math",
+]
+
+[[package]]
+name = "auralite-fuzz"
+version = "0.1.0"
+dependencies = [
+ "auralite-collision",
+ "auralite-core",
+ "auralite-dynamics",
+ "auralite-geometry",
+ "auralite-math",
+ "auralite-serialize",
 ]
 
 [[package]]
