@@ -1,15 +1,65 @@
-name: ci
+name: CI & Quality Gates
+
 on: [push, pull_request]
+
 jobs:
-  rust:
+  verify:
+    name: Verify (${{ matrix.os }})
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: rustup show
-      - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: cargo build --workspace --release
+
+      - name: Install Rust Stable Toolchain (1.97.0)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+          components: rustfmt, clippy
+
+      - name: Verify Code Formatting
+        run: cargo fmt --all --check
+
+      - name: Verify Strict Clippy Lints (All Targets & Features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Execute Full Workspace Test Suite (All Features)
+        run: cargo test --workspace --all-features
+
+      - name: Execute Workspace Doctests
+        run: cargo test --doc --workspace
+
+      - name: Verify Double-Precision (f64) Math Configuration
+        run: cargo test -p auralite-math --no-default-features --features f64
+
+      - name: Verify Single-Thread Dynamics Configuration
+        run: cargo build -p auralite-dynamics --no-default-features --features single-thread
+
+      - name: Build Release Artifacts
+        run: cargo build --workspace --release
+
+      - name: Run Automated Sandbox Scene Verifications
+        run: cargo run -p auralite-sandbox --release
+
+      - name: Verify Benchmark Compilation (Smoke Check)
+        run: cargo bench --workspace --no-run
+
+      - name: Verify C FFI Compilation and Header Drift (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          gcc crates/auralite-ffi/c_example/main.c target/release/libauralite_ffi.a -lpthread -ldl -lm -o c_verify
+          ./c_verify
+
+  cross_check:
+    name: Cross-Target Parity Check (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Stable Toolchain & aarch64 Target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+          targets: aarch64-unknown-linux-gnu
+      - name: Check ARM64 SIMD (NEON) Parity
+        run: cargo check --workspace --target aarch64-unknown-linux-gnu --all-features

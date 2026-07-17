@@ -10,5 +10,7 @@ auralite-math = { path = "../auralite-math" }
 auralite-geometry = { path = "../auralite-geometry" }
 auralite-collision = { path = "../auralite-collision" }
 auralite-dynamics = { path = "../auralite-dynamics" }
+auralite-softbody = { path = "../auralite-softbody" }
+auralite-particles = { path = "../auralite-particles" }
 [lints]
 workspace = true

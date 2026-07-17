@@ -121,8 +121,10 @@ pub enum MathError {
 /// A native 2D rotation represented by sine/cosine.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rot2 {
-    c: Real,
-    s: Real,
+    /// Cosine of angle.
+    pub c: Real,
+    /// Sine of angle.
+    pub s: Real,
 }
 impl Rot2 {
     /// Creates a rotation from radians.
@@ -644,6 +646,13 @@ impl Segment3 {
     }
 }
 /// A normalized 3D ray.
+///
+/// # Example
+/// ```
+/// use auralite_math::{Ray3, Vec3};
+/// let ray = Ray3::new(Vec3 { x: 0.0, y: 5.0, z: 0.0 }, Vec3 { x: 0.0, y: -1.0, z: 0.0 }).unwrap();
+/// assert_eq!(ray.point_at(2.0).y, 3.0);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ray3 {
     /// Origin.
@@ -666,10 +675,15 @@ impl Ray3 {
             })
         }
     }
-    /// Point at nonnegative or negative line parameter.
+    /// Evaluates the ray at parameter `t`.
     #[must_use]
     pub fn at(self, t: Real) -> Vec3 {
         self.origin + self.direction * t
+    }
+    /// Evaluates the ray at parameter `t`.
+    #[must_use]
+    pub fn point_at(self, t: Real) -> Vec3 {
+        self.at(t)
     }
 }
 /// Hessian-normal plane satisfying `normal·point = offset`.
@@ -749,6 +763,13 @@ impl Triangle3 {
 }
 
 /// A normalized 2D ray.
+///
+/// # Example
+/// ```
+/// use auralite_math::{Ray2, Vec2};
+/// let ray = Ray2::new(Vec2 { x: 0.0, y: 5.0 }, Vec2 { x: 0.0, y: -1.0 }).unwrap();
+/// assert_eq!(ray.point_at(2.0).y, 3.0);
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ray2 {
     /// Origin.
@@ -775,6 +796,11 @@ impl Ray2 {
     #[must_use]
     pub fn at(self, t: Real) -> Vec2 {
         self.origin + self.direction * t
+    }
+    /// Evaluates the ray at parameter `t`.
+    #[must_use]
+    pub fn point_at(self, t: Real) -> Vec2 {
+        self.at(t)
     }
 }
 /// An infinite 2D line in point-direction form.

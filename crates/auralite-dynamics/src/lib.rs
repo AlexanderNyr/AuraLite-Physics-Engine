@@ -1,7 +1,6 @@
 //! Native dimension-separated rigid-body worlds with full rotation, solver, colliders, sleeping, and sensors.
 #![forbid(unsafe_code)]
 #![allow(
-    missing_docs,
     clippy::too_many_arguments,
     clippy::type_complexity,
     clippy::collapsible_if,
@@ -357,6 +356,15 @@ pub(crate) fn apply_impulse3(
     }
 }
 
+/// Builder for constructing 2D bodies (`Static`, `Kinematic`, `Dynamic`).
+///
+/// # Example
+/// ```
+/// use auralite_dynamics::BodyBuilder2;
+/// use auralite_math::Vec2;
+/// let builder = BodyBuilder2::dynamic().position(Vec2 { x: 1.0, y: 2.0 }).mass(5.0);
+/// assert_eq!(builder.position.x, 1.0);
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyBuilder2 {
     pub kind: BodyType,
@@ -453,6 +461,15 @@ impl Default for BodyBuilder2 {
         Self::new()
     }
 }
+/// Builder for constructing 3D bodies (`Static`, `Kinematic`, `Dynamic`).
+///
+/// # Example
+/// ```
+/// use auralite_dynamics::BodyBuilder3;
+/// use auralite_math::Vec3;
+/// let builder = BodyBuilder3::dynamic().position(Vec3 { x: 1.0, y: 2.0, z: 3.0 }).mass(5.0);
+/// assert_eq!(builder.position.x, 1.0);
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct BodyBuilder3 {
     pub kind: BodyType,
@@ -893,6 +910,18 @@ pub struct SensorEvent {
     pub began: bool,
 }
 
+/// A 2D rigid body world containing bodies, joints, and spatial tree.
+///
+/// # Example
+/// ```
+/// use auralite_dynamics::{World2, BodyBuilder2};
+/// use auralite_math::Vec2;
+///
+/// let mut world = World2::default();
+/// let body = world.add_body(BodyBuilder2::dynamic().position(Vec2 { x: 0.0, y: 10.0 })).unwrap();
+/// world.step(0.016).unwrap();
+/// assert!(world.body(body).unwrap().position.y < 10.0);
+/// ```
 #[derive(Clone)]
 pub struct World2 {
     gravity: Vec2,
@@ -1352,6 +1381,24 @@ impl World2 {
     pub fn gravity(&self) -> Vec2 {
         self.gravity
     }
+    pub fn bodies_iter(&self) -> impl Iterator<Item = (BodyHandle2, &Body2)> {
+        self.bodies.iter()
+    }
+    pub fn set_step_count(&mut self, step: u64) {
+        self.step = step;
+    }
+    pub fn insert_restored_body(&mut self, body: Body2) -> BodyHandle2 {
+        if body.id.0 >= self.next_id {
+            self.next_id = body.id.0 + 1;
+        }
+        self.bodies.insert(body)
+    }
+    pub fn rebuild_tree(&mut self) {
+        self.dynamic_tree = DynamicTree2::new(0.02, 1.0 / 60.0).unwrap();
+        for (_, b) in self.bodies.iter() {
+            self.dynamic_tree.update(b.id.0, b.world_aabb(), b.velocity);
+        }
+    }
     pub fn serialize_bodies(&self) -> Vec<u8> {
         let mut b = Vec::new();
         for (_, body) in self.bodies.iter() {
@@ -1431,6 +1478,18 @@ impl World2 {
     }
 }
 
+/// A 3D rigid body world containing bodies, joints, and spatial tree.
+///
+/// # Example
+/// ```
+/// use auralite_dynamics::{World3, BodyBuilder3};
+/// use auralite_math::Vec3;
+///
+/// let mut world = World3::default();
+/// let body = world.add_body(BodyBuilder3::dynamic().position(Vec3 { x: 0.0, y: 10.0, z: 0.0 })).unwrap();
+/// world.step(0.016).unwrap();
+/// assert!(world.body(body).unwrap().position.y < 10.0);
+/// ```
 #[derive(Clone)]
 pub struct World3 {
     gravity: Vec3,
@@ -1696,6 +1755,31 @@ impl World3 {
     pub fn step_count(&self) -> u64 {
         self.step
     }
+    pub fn gravity(&self) -> Vec3 {
+        self.gravity
+    }
+    pub fn bodies_iter(&self) -> impl Iterator<Item = (BodyHandle3, &Body3)> {
+        self.bodies.iter()
+    }
+    pub fn set_gravity(&mut self, g: Vec3) -> Result<(), WorldError> {
+        self.gravity = g;
+        Ok(())
+    }
+    pub fn set_step_count(&mut self, step: u64) {
+        self.step = step;
+    }
+    pub fn insert_restored_body(&mut self, body: Body3) -> BodyHandle3 {
+        if body.id.0 >= self.next_id {
+            self.next_id = body.id.0 + 1;
+        }
+        self.bodies.insert(body)
+    }
+    pub fn rebuild_tree(&mut self) {
+        self.dynamic_tree = DynamicTree3::new(0.02, 1.0 / 60.0).unwrap();
+        for (_, b) in self.bodies.iter() {
+            self.dynamic_tree.update(b.id.0, b.world_aabb(), b.velocity);
+        }
+    }
     pub fn snapshot(&self) -> Snapshot3 {
         Snapshot3 {
             states: self
@@ -1794,13 +1878,6 @@ impl World3 {
             b.sleeping = false;
         }
         Ok(())
-    }
-    pub fn set_gravity(&mut self, g: Vec3) -> Result<(), WorldError> {
-        self.gravity = g;
-        Ok(())
-    }
-    pub fn gravity(&self) -> Vec3 {
-        self.gravity
     }
     pub fn serialize_bodies(&self) -> Vec<u8> {
         let mut b = Vec::new();

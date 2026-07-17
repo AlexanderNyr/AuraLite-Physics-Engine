@@ -119,7 +119,8 @@ impl Circle2 {
 /// A solid 3D sphere.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sphere3 {
-    radius: Real,
+    /// Radius.
+    pub radius: Real,
 }
 impl Sphere3 {
     /// Validates positive radius.
@@ -349,9 +350,12 @@ impl Edge3 {
 /// A convex polyhedron built from a finite point cloud using enumerated supporting faces.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConvexHull3 {
-    vertices: Vec<Vec3>,
-    faces: Vec<[usize; 3]>,
-    aabb: Aabb3,
+    /// Vertices.
+    pub vertices: Vec<Vec3>,
+    /// Faces.
+    pub faces: Vec<[usize; 3]>,
+    /// Bounding box.
+    pub aabb: Aabb3,
 }
 impl ConvexHull3 {
     /// Builds a hull. Duplicate points are removed; coplanar-only input is rejected. Face enumeration is O(n^4), intended as a robust reference builder.
@@ -590,10 +594,14 @@ pub struct BvhNode {
 /// Validated triangle mesh with deterministic median-split BVH.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMesh {
-    vertices: Vec<Vec3>,
-    indices: Vec<[u32; 3]>,
-    nodes: Vec<BvhNode>,
-    root: usize,
+    /// Vertices.
+    pub vertices: Vec<Vec3>,
+    /// Triangle indices.
+    pub indices: Vec<[u32; 3]>,
+    /// BVH nodes.
+    pub nodes: Vec<BvhNode>,
+    /// Root node index.
+    pub root: usize,
 }
 impl TriangleMesh {
     /// Validates indices/triangles and builds a BVH.

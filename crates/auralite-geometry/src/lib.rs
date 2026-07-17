@@ -119,7 +119,8 @@ impl Box2 {
 /// Validated 3D axis-aligned box in local space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Box3 {
-    half: Vec3,
+    /// Half extents.
+    pub half: Vec3,
 }
 impl Box3 {
     /// Constructs from positive finite half extents.

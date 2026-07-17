@@ -9,12 +9,13 @@
 #![allow(missing_docs, dead_code)]
 
 use auralite_core::{StableId, hash_bytes};
-use auralite_dynamics::joints::{JointId, JointType2};
+use auralite_dynamics::joints::{JointId, JointType2, JointType3};
 use auralite_dynamics::{
-    Body2, BodyHandle2, BodyType, Collider2, ColliderShape2, Joint2, JointConfig2, JointLimits,
-    JointMotor, Material, World2,
+    Body2, Body3, BodyHandle2, BodyHandle3, BodyType, Collider2, Collider3, ColliderShape2,
+    ColliderShape3, Joint2, Joint3, JointConfig2, JointConfig3, JointLimits, JointMotor, Material,
+    World2, World3,
 };
-use auralite_math::{Real, Rot2, Vec2, Vec3};
+use auralite_math::{Quat, Real, Rot2, Vec2, Vec3};
 
 // ─── Envelope ────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,8 @@ pub enum TypeTag {
     ForceField = 14,
     CombinedSnapshot2 = 15,
     CombinedSnapshot3 = 16,
+    Joint3State = 17,
+    JointConfig3 = 18,
 }
 
 impl TypeTag {
@@ -113,6 +116,8 @@ impl TypeTag {
             14 => Self::ForceField,
             15 => Self::CombinedSnapshot2,
             16 => Self::CombinedSnapshot3,
+            17 => Self::Joint3State,
+            18 => Self::JointConfig3,
             _ => return None,
         })
     }
@@ -358,7 +363,8 @@ pub fn serialize_body2(b: &Body2) -> Vec<u8> {
     write_u64(&mut buf, b.id.0);
     write_u8(&mut buf, b.kind as u8);
     write_vec2(&mut buf, b.position);
-    write_f32(&mut buf, rot2_angle(b.rotation));
+    write_f32(&mut buf, b.rotation.c);
+    write_f32(&mut buf, b.rotation.s);
     write_vec2(&mut buf, b.velocity);
     write_f32(&mut buf, b.angular_velocity);
     write_f32(&mut buf, b.inv_mass);
@@ -430,8 +436,9 @@ pub fn deserialize_body2(data: &[u8]) -> Result<Body2, Error> {
         _ => return Err(Error::InvalidEnumDiscriminant),
     };
     let position = read_vec2(payload, &mut pos)?;
-    let angle = read_f32(payload, &mut pos)?;
-    let rotation = Rot2::from_radians(angle).map_err(|_| Error::InvalidEnumDiscriminant)?;
+    let rc = read_f32(payload, &mut pos)?;
+    let rs = read_f32(payload, &mut pos)?;
+    let rotation = Rot2 { c: rc, s: rs };
     let velocity = read_vec2(payload, &mut pos)?;
     let angular_velocity = read_f32(payload, &mut pos)?;
     let inv_mass = read_f32(payload, &mut pos)?;
@@ -544,44 +551,391 @@ fn rot2_angle(r: Rot2) -> Real {
     v.y.atan2(v.x)
 }
 
+pub fn serialize_collider3(c: &Collider3) -> Vec<u8> {
+    let mut buf = Vec::new();
+    match &c.shape {
+        ColliderShape3::Sphere(s) => {
+            write_u8(&mut buf, 0);
+            write_f32(&mut buf, s.radius);
+        }
+        ColliderShape3::Box(bx) => {
+            write_u8(&mut buf, 1);
+            write_vec3(&mut buf, bx.half);
+        }
+        ColliderShape3::Capsule(cap) => {
+            write_u8(&mut buf, 2);
+            write_f32(&mut buf, cap.radius);
+            write_f32(&mut buf, cap.half_height);
+        }
+        ColliderShape3::ConvexHull(hull) => {
+            write_u8(&mut buf, 3);
+            write_u32(&mut buf, hull.vertices.len() as u32);
+            for v in &hull.vertices {
+                write_vec3(&mut buf, *v);
+            }
+        }
+        ColliderShape3::TriangleMesh(mesh) => {
+            write_u8(&mut buf, 4);
+            write_u32(&mut buf, mesh.vertices.len() as u32);
+            for v in &mesh.vertices {
+                write_vec3(&mut buf, *v);
+            }
+            write_u32(&mut buf, mesh.indices.len() as u32);
+            for f in &mesh.indices {
+                write_u32(&mut buf, f[0]);
+                write_u32(&mut buf, f[1]);
+                write_u32(&mut buf, f[2]);
+            }
+        }
+        ColliderShape3::Edge(edge) => {
+            write_u8(&mut buf, 5);
+            let a = edge.closest_point(Vec3::ZERO);
+            let b = edge.closest_point(Vec3::X);
+            write_vec3(&mut buf, a);
+            write_vec3(&mut buf, b);
+        }
+    }
+    write_vec3(&mut buf, c.offset);
+    write_f32(&mut buf, c.material.restitution);
+    write_f32(&mut buf, c.material.friction);
+    write_f32(&mut buf, c.material.density);
+    write_u64(&mut buf, c.filter.layers);
+    write_u64(&mut buf, c.filter.mask);
+    write_i32_as_u32(&mut buf, c.filter.group);
+    write_bool(&mut buf, c.filter.sensor);
+    write_typed_payload(TypeTag::Collider3, &buf)
+}
+
+pub fn deserialize_collider3(data: &[u8]) -> Result<Collider3, Error> {
+    let payload = read_typed_payload(data, &mut 0, TypeTag::Collider3)?;
+    let mut pos = 0;
+    let shape_disc = read_u8(payload, &mut pos)?;
+    let shape = match shape_disc {
+        0 => {
+            let r = read_f32(payload, &mut pos)?;
+            ColliderShape3::Sphere(
+                auralite_geometry::Sphere3::new(r).map_err(|_| Error::InvalidEnumDiscriminant)?,
+            )
+        }
+        1 => {
+            let h = read_vec3(payload, &mut pos)?;
+            ColliderShape3::Box(
+                auralite_geometry::Box3::new(h).map_err(|_| Error::InvalidEnumDiscriminant)?,
+            )
+        }
+        2 => {
+            let r = read_f32(payload, &mut pos)?;
+            let hh = read_f32(payload, &mut pos)?;
+            ColliderShape3::Capsule(
+                auralite_geometry::Capsule3::new(r, hh)
+                    .map_err(|_| Error::InvalidEnumDiscriminant)?,
+            )
+        }
+        3 => {
+            let n = read_u32(payload, &mut pos)? as usize;
+            let mut vertices = Vec::with_capacity(n);
+            for _ in 0..n {
+                vertices.push(read_vec3(payload, &mut pos)?);
+            }
+            ColliderShape3::ConvexHull(
+                auralite_geometry::ConvexHull3::build(&vertices)
+                    .map_err(|_| Error::InvalidEnumDiscriminant)?,
+            )
+        }
+        4 => {
+            let n_v = read_u32(payload, &mut pos)? as usize;
+            let mut vertices = Vec::with_capacity(n_v);
+            for _ in 0..n_v {
+                vertices.push(read_vec3(payload, &mut pos)?);
+            }
+            let n_i = read_u32(payload, &mut pos)? as usize;
+            let mut indices = Vec::with_capacity(n_i);
+            for _ in 0..n_i {
+                let i0 = read_u32(payload, &mut pos)?;
+                let i1 = read_u32(payload, &mut pos)?;
+                let i2 = read_u32(payload, &mut pos)?;
+                indices.push([i0, i1, i2]);
+            }
+            ColliderShape3::TriangleMesh(
+                auralite_geometry::TriangleMesh::new(vertices, indices)
+                    .map_err(|_| Error::InvalidEnumDiscriminant)?,
+            )
+        }
+        5 => {
+            let a = read_vec3(payload, &mut pos)?;
+            let b = read_vec3(payload, &mut pos)?;
+            ColliderShape3::Edge(
+                auralite_geometry::Edge3::new(a, b).map_err(|_| Error::InvalidEnumDiscriminant)?,
+            )
+        }
+        _ => return Err(Error::UnsupportedTypeTag),
+    };
+    let offset = read_vec3(payload, &mut pos)?;
+    let restitution = read_f32(payload, &mut pos)?;
+    let friction = read_f32(payload, &mut pos)?;
+    let density = read_f32(payload, &mut pos)?;
+    let layers = read_u64(payload, &mut pos)?;
+    let mask = read_u64(payload, &mut pos)?;
+    let group = read_u32_as_i32(payload, &mut pos)?;
+    let sensor = read_bool(payload, &mut pos)?;
+    Ok(Collider3 {
+        shape,
+        offset,
+        material: Material {
+            restitution,
+            friction,
+            density,
+        },
+        filter: auralite_collision::CollisionFilter {
+            layers,
+            mask,
+            group,
+            sensor,
+        },
+    })
+}
+
+pub fn serialize_body3(b: &Body3) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_u64(&mut buf, b.id.0);
+    write_u8(&mut buf, b.kind as u8);
+    write_vec3(&mut buf, b.position);
+    write_f32(&mut buf, b.rotation.x);
+    write_f32(&mut buf, b.rotation.y);
+    write_f32(&mut buf, b.rotation.z);
+    write_f32(&mut buf, b.rotation.w);
+    write_vec3(&mut buf, b.velocity);
+    write_vec3(&mut buf, b.angular_velocity);
+    write_f32(&mut buf, b.inv_mass);
+    write_vec3(&mut buf, b.inv_inertia_diagonal);
+    write_u32(&mut buf, b.colliders.len() as u32);
+    for c in &b.colliders {
+        let col_bytes = serialize_collider3(c);
+        write_u32(&mut buf, col_bytes.len() as u32);
+        buf.extend_from_slice(&col_bytes);
+    }
+    write_f32(&mut buf, b.restitution);
+    write_f32(&mut buf, b.friction);
+    write_bool(&mut buf, b.sleeping);
+    write_vec3(&mut buf, b.force);
+    write_vec3(&mut buf, b.torque);
+    write_f32(&mut buf, b.linear_damping);
+    write_f32(&mut buf, b.angular_damping);
+    write_u64(&mut buf, b.user_data);
+    write_typed_payload(TypeTag::Body3, &buf)
+}
+
+pub fn deserialize_body3(data: &[u8]) -> Result<Body3, Error> {
+    let payload = read_typed_payload(data, &mut 0, TypeTag::Body3)?;
+    let mut pos = 0;
+    let id = StableId(read_u64(payload, &mut pos)?);
+    let kind = match read_u8(payload, &mut pos)? {
+        0 => BodyType::Static,
+        1 => BodyType::Kinematic,
+        2 => BodyType::Dynamic,
+        _ => return Err(Error::InvalidEnumDiscriminant),
+    };
+    let position = read_vec3(payload, &mut pos)?;
+    let rx = read_f32(payload, &mut pos)?;
+    let ry = read_f32(payload, &mut pos)?;
+    let rz = read_f32(payload, &mut pos)?;
+    let rw = read_f32(payload, &mut pos)?;
+    let rotation = Quat {
+        x: rx,
+        y: ry,
+        z: rz,
+        w: rw,
+    };
+    let velocity = read_vec3(payload, &mut pos)?;
+    let angular_velocity = read_vec3(payload, &mut pos)?;
+    let inv_mass = read_f32(payload, &mut pos)?;
+    let inv_inertia_diagonal = read_vec3(payload, &mut pos)?;
+    let n_colliders = read_u32(payload, &mut pos)? as usize;
+    let mut colliders = Vec::with_capacity(n_colliders);
+    for _ in 0..n_colliders {
+        let clen = read_u32(payload, &mut pos)? as usize;
+        if pos + clen > payload.len() {
+            return Err(Error::Truncated);
+        }
+        colliders.push(deserialize_collider3(&payload[pos..pos + clen])?);
+        pos += clen;
+    }
+    let restitution = read_f32(payload, &mut pos)?;
+    let friction = read_f32(payload, &mut pos)?;
+    let sleeping = read_bool(payload, &mut pos)?;
+    let force = read_vec3(payload, &mut pos)?;
+    let torque = read_vec3(payload, &mut pos)?;
+    let linear_damping = read_f32(payload, &mut pos)?;
+    let angular_damping = read_f32(payload, &mut pos)?;
+    let user_data = read_u64(payload, &mut pos)?;
+
+    Ok(Body3 {
+        id,
+        kind,
+        position,
+        rotation,
+        velocity,
+        angular_velocity,
+        inv_mass,
+        inv_inertia_diagonal,
+        colliders,
+        restitution,
+        friction,
+        sleeping,
+        force,
+        torque,
+        linear_damping,
+        angular_damping,
+        user_data,
+    })
+}
+
 // ─── World2 snapshot serialization ───────────────────────────────────────────
 
 pub fn serialize_world2(world: &World2) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, world.step_count());
     write_vec2(&mut buf, world.gravity());
-    let bodies_data = world.serialize_bodies();
+    let mut bodies_data = Vec::new();
+    for (_, body) in world.bodies_iter() {
+        let b_bytes = serialize_body2(body);
+        write_u32(&mut bodies_data, b_bytes.len() as u32);
+        bodies_data.extend_from_slice(&b_bytes);
+    }
     write_u32(&mut buf, bodies_data.len() as u32);
     buf.extend_from_slice(&bodies_data);
-    let joints_data = world.serialize_joints();
+
+    let mut joints_data = Vec::new();
+    for j in &world.joints {
+        let j_bytes = serialize_joint2(j);
+        write_u32(&mut joints_data, j_bytes.len() as u32);
+        joints_data.extend_from_slice(&j_bytes);
+    }
     write_u32(&mut buf, joints_data.len() as u32);
     buf.extend_from_slice(&joints_data);
     write_typed_payload(TypeTag::World2State, &buf)
 }
 
-pub fn serialize_world3(world: &auralite_dynamics::World3) -> Vec<u8> {
+pub fn serialize_world3(world: &World3) -> Vec<u8> {
     let mut buf = Vec::new();
     write_u64(&mut buf, world.step_count());
-    // write_vec3(&mut buf, world.gravity()); // missing getter for gravity in world3
-    let bodies_data = world.serialize_bodies();
+    write_vec3(&mut buf, world.gravity());
+    let mut bodies_data = Vec::new();
+    for (_, body) in world.bodies_iter() {
+        let b_bytes = serialize_body3(body);
+        write_u32(&mut bodies_data, b_bytes.len() as u32);
+        bodies_data.extend_from_slice(&b_bytes);
+    }
     write_u32(&mut buf, bodies_data.len() as u32);
     buf.extend_from_slice(&bodies_data);
+
+    let mut joints_data = Vec::new();
+    for j in &world.joints {
+        let j_bytes = serialize_joint3(j);
+        write_u32(&mut joints_data, j_bytes.len() as u32);
+        joints_data.extend_from_slice(&j_bytes);
+    }
+    write_u32(&mut buf, joints_data.len() as u32);
+    buf.extend_from_slice(&joints_data);
     write_typed_payload(TypeTag::World3State, &buf)
 }
 
-/// Deserialize world state into a byte payload that can be restored.
-pub fn deserialize_world2_state(data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Error> {
+/// Deserialize 2D world state into components that can be restored.
+pub fn deserialize_world2_state(data: &[u8]) -> Result<(u64, Vec2, Vec<u8>, Vec<u8>), Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::World2State)?;
     let mut pos = 0;
-    let _step = read_u64(payload, &mut pos)?;
-    let _gravity = read_vec2(payload, &mut pos)?;
-    let _n_bodies = read_u32(payload, &mut pos)?;
+    let step = read_u64(payload, &mut pos)?;
+    let gravity = read_vec2(payload, &mut pos)?;
     let bodies_len = read_u32(payload, &mut pos)? as usize;
+    if pos + bodies_len > payload.len() {
+        return Err(Error::Truncated);
+    }
     let bodies_data = payload[pos..pos + bodies_len].to_vec();
     pos += bodies_len;
     let joints_len = read_u32(payload, &mut pos)? as usize;
+    if pos + joints_len > payload.len() {
+        return Err(Error::Truncated);
+    }
     let joints_data = payload[pos..pos + joints_len].to_vec();
-    Ok((bodies_data, joints_data))
+    Ok((step, gravity, bodies_data, joints_data))
+}
+
+/// Deserialize 3D world state into components that can be restored.
+pub fn deserialize_world3_state(data: &[u8]) -> Result<(u64, Vec3, Vec<u8>, Vec<u8>), Error> {
+    let payload = read_typed_payload(data, &mut 0, TypeTag::World3State)?;
+    let mut pos = 0;
+    let step = read_u64(payload, &mut pos)?;
+    let gravity = read_vec3(payload, &mut pos)?;
+    let bodies_len = read_u32(payload, &mut pos)? as usize;
+    if pos + bodies_len > payload.len() {
+        return Err(Error::Truncated);
+    }
+    let bodies_data = payload[pos..pos + bodies_len].to_vec();
+    pos += bodies_len;
+    let joints_len = read_u32(payload, &mut pos)? as usize;
+    if pos + joints_len > payload.len() {
+        return Err(Error::Truncated);
+    }
+    let joints_data = payload[pos..pos + joints_len].to_vec();
+    Ok((step, gravity, bodies_data, joints_data))
+}
+
+pub fn deserialize_world2(data: &[u8]) -> Result<World2, Error> {
+    let (step, gravity, bodies_data, joints_data) = deserialize_world2_state(data)?;
+    let mut w = World2::default();
+    let _ = w.set_gravity(gravity);
+    w.set_step_count(step);
+    let mut pos = 0;
+    while pos + 4 <= bodies_data.len() {
+        let blen = read_u32(&bodies_data, &mut pos)? as usize;
+        if pos + blen > bodies_data.len() {
+            return Err(Error::Truncated);
+        }
+        let body = deserialize_body2(&bodies_data[pos..pos + blen])?;
+        pos += blen;
+        w.insert_restored_body(body);
+    }
+    let mut jpos = 0;
+    while jpos + 4 <= joints_data.len() {
+        let jlen = read_u32(&joints_data, &mut jpos)? as usize;
+        if jpos + jlen > joints_data.len() {
+            return Err(Error::Truncated);
+        }
+        let joint = deserialize_joint2(&joints_data[jpos..jpos + jlen])?;
+        jpos += jlen;
+        w.joints.push(joint);
+    }
+    w.rebuild_tree();
+    Ok(w)
+}
+
+pub fn deserialize_world3(data: &[u8]) -> Result<World3, Error> {
+    let (step, gravity, bodies_data, joints_data) = deserialize_world3_state(data)?;
+    let mut w = World3::default();
+    let _ = w.set_gravity(gravity);
+    w.set_step_count(step);
+    let mut pos = 0;
+    while pos + 4 <= bodies_data.len() {
+        let blen = read_u32(&bodies_data, &mut pos)? as usize;
+        if pos + blen > bodies_data.len() {
+            return Err(Error::Truncated);
+        }
+        let body = deserialize_body3(&bodies_data[pos..pos + blen])?;
+        pos += blen;
+        w.insert_restored_body(body);
+    }
+    let mut jpos = 0;
+    while jpos + 4 <= joints_data.len() {
+        let jlen = read_u32(&joints_data, &mut jpos)? as usize;
+        if jpos + jlen > joints_data.len() {
+            return Err(Error::Truncated);
+        }
+        let joint = deserialize_joint3(&joints_data[jpos..jpos + jlen])?;
+        jpos += jlen;
+        w.joints.push(joint);
+    }
+    w.rebuild_tree();
+    Ok(w)
 }
 
 // ─── Joint serialization ────────────────────────────────────────────────────
@@ -597,10 +951,23 @@ pub fn serialize_joint2(j: &Joint2) -> Vec<u8> {
         JointType2::Prismatic { .. } => 4u8,
     };
     write_u8(&mut buf, jt_disc);
-    write_u64(&mut buf, c.body_a.index() as u64);
-    write_u64(&mut buf, c.body_b.index() as u64);
+    write_u64(&mut buf, j.id.0);
+    write_u32(&mut buf, c.body_a.index());
+    write_u32(&mut buf, c.body_a.generation());
+    write_u32(&mut buf, c.body_b.index());
+    write_u32(&mut buf, c.body_b.generation());
     write_vec2(&mut buf, c.anchor_a);
     write_vec2(&mut buf, c.anchor_b);
+    match c.joint_type {
+        JointType2::Spring { stiffness, damping } => {
+            write_f32(&mut buf, stiffness);
+            write_f32(&mut buf, damping);
+        }
+        JointType2::Prismatic { axis_local } => {
+            write_vec2(&mut buf, axis_local);
+        }
+        _ => {}
+    }
     write_f32(&mut buf, c.limits.min);
     write_f32(&mut buf, c.limits.max);
     write_bool(&mut buf, c.limits.enabled);
@@ -622,11 +989,29 @@ fn write_i32(buf: &mut Vec<u8>, v: i32) {
 pub fn deserialize_joint2(data: &[u8]) -> Result<Joint2, Error> {
     let payload = read_typed_payload(data, &mut 0, TypeTag::Joint2State)?;
     let mut pos = 0;
-    let _jt = read_u8(payload, &mut pos)?;
-    let _ba = read_u64(payload, &mut pos)?;
-    let _bb = read_u64(payload, &mut pos)?;
+    let jt_disc = read_u8(payload, &mut pos)?;
+    let id = JointId(read_u64(payload, &mut pos)?);
+    let ba_i = read_u32(payload, &mut pos)?;
+    let ba_g = read_u32(payload, &mut pos)?;
+    let bb_i = read_u32(payload, &mut pos)?;
+    let bb_g = read_u32(payload, &mut pos)?;
     let anchor_a = read_vec2(payload, &mut pos)?;
     let anchor_b = read_vec2(payload, &mut pos)?;
+    let joint_type = match jt_disc {
+        0 => JointType2::Weld,
+        1 => JointType2::Distance,
+        2 => {
+            let stiffness = read_f32(payload, &mut pos)?;
+            let damping = read_f32(payload, &mut pos)?;
+            JointType2::Spring { stiffness, damping }
+        }
+        3 => JointType2::Revolute,
+        4 => {
+            let axis_local = read_vec2(payload, &mut pos)?;
+            JointType2::Prismatic { axis_local }
+        }
+        _ => return Err(Error::InvalidEnumDiscriminant),
+    };
     let l_min = read_f32(payload, &mut pos)?;
     let l_max = read_f32(payload, &mut pos)?;
     let l_enabled = read_bool(payload, &mut pos)?;
@@ -640,11 +1025,11 @@ pub fn deserialize_joint2(data: &[u8]) -> Result<Joint2, Error> {
     let broken = read_bool(payload, &mut pos)?;
 
     Ok(Joint2 {
-        id: JointId(0), // Dummy for now, or read if serialized
+        id,
         config: JointConfig2 {
-            joint_type: JointType2::Weld,
-            body_a: BodyHandle2::default(),
-            body_b: BodyHandle2::default(),
+            joint_type,
+            body_a: BodyHandle2::new(ba_i, ba_g),
+            body_b: BodyHandle2::new(bb_i, bb_g),
             anchor_a,
             anchor_b,
             limits: JointLimits {
@@ -664,6 +1049,217 @@ pub fn deserialize_joint2(data: &[u8]) -> Result<Joint2, Error> {
         accumulated_position_error: pos_error,
         broken,
     })
+}
+
+pub fn serialize_joint3(j: &Joint3) -> Vec<u8> {
+    let c = &j.config;
+    let mut buf = Vec::new();
+    let jt_disc = match c.joint_type {
+        JointType3::BallSocket => 0u8,
+        JointType3::Distance => 1u8,
+        JointType3::Spring { .. } => 2u8,
+        JointType3::Weld => 3u8,
+        JointType3::Hinge { .. } => 4u8,
+        JointType3::Slider { .. } => 5u8,
+    };
+    write_u8(&mut buf, jt_disc);
+    write_u64(&mut buf, j.id.0);
+    write_u32(&mut buf, c.body_a.index());
+    write_u32(&mut buf, c.body_a.generation());
+    write_u32(&mut buf, c.body_b.index());
+    write_u32(&mut buf, c.body_b.generation());
+    write_vec3(&mut buf, c.anchor_a);
+    write_vec3(&mut buf, c.anchor_b);
+    match c.joint_type {
+        JointType3::Spring { stiffness, damping } => {
+            write_f32(&mut buf, stiffness);
+            write_f32(&mut buf, damping);
+        }
+        JointType3::Hinge { axis_local } | JointType3::Slider { axis_local } => {
+            write_vec3(&mut buf, axis_local);
+        }
+        _ => {}
+    }
+    write_f32(&mut buf, c.limits.min);
+    write_f32(&mut buf, c.limits.max);
+    write_bool(&mut buf, c.limits.enabled);
+    write_f32(&mut buf, c.motor.target_speed);
+    write_f32(&mut buf, c.motor.max_force);
+    write_bool(&mut buf, c.motor.enabled);
+    write_f32(&mut buf, c.break_impulse);
+    write_u64(&mut buf, c.user_data);
+    write_f32(&mut buf, j.impulse);
+    write_f32(&mut buf, j.accumulated_position_error);
+    write_bool(&mut buf, j.broken);
+    write_typed_payload(TypeTag::Joint3State, &buf)
+}
+
+pub fn deserialize_joint3(data: &[u8]) -> Result<Joint3, Error> {
+    let payload = read_typed_payload(data, &mut 0, TypeTag::Joint3State)?;
+    let mut pos = 0;
+    let jt_disc = read_u8(payload, &mut pos)?;
+    let id = JointId(read_u64(payload, &mut pos)?);
+    let ba_i = read_u32(payload, &mut pos)?;
+    let ba_g = read_u32(payload, &mut pos)?;
+    let bb_i = read_u32(payload, &mut pos)?;
+    let bb_g = read_u32(payload, &mut pos)?;
+    let anchor_a = read_vec3(payload, &mut pos)?;
+    let anchor_b = read_vec3(payload, &mut pos)?;
+    let joint_type = match jt_disc {
+        0 => JointType3::BallSocket,
+        1 => JointType3::Distance,
+        2 => {
+            let stiffness = read_f32(payload, &mut pos)?;
+            let damping = read_f32(payload, &mut pos)?;
+            JointType3::Spring { stiffness, damping }
+        }
+        3 => JointType3::Weld,
+        4 => {
+            let axis_local = read_vec3(payload, &mut pos)?;
+            JointType3::Hinge { axis_local }
+        }
+        5 => {
+            let axis_local = read_vec3(payload, &mut pos)?;
+            JointType3::Slider { axis_local }
+        }
+        _ => return Err(Error::InvalidEnumDiscriminant),
+    };
+    let l_min = read_f32(payload, &mut pos)?;
+    let l_max = read_f32(payload, &mut pos)?;
+    let l_enabled = read_bool(payload, &mut pos)?;
+    let m_speed = read_f32(payload, &mut pos)?;
+    let m_force = read_f32(payload, &mut pos)?;
+    let m_enabled = read_bool(payload, &mut pos)?;
+    let break_impulse = read_f32(payload, &mut pos)?;
+    let user_data = read_u64(payload, &mut pos)?;
+    let impulse = read_f32(payload, &mut pos)?;
+    let pos_error = read_f32(payload, &mut pos)?;
+    let broken = read_bool(payload, &mut pos)?;
+
+    Ok(Joint3 {
+        id,
+        config: JointConfig3 {
+            joint_type,
+            body_a: BodyHandle3::new(ba_i, ba_g),
+            body_b: BodyHandle3::new(bb_i, bb_g),
+            anchor_a,
+            anchor_b,
+            limits: JointLimits {
+                min: l_min,
+                max: l_max,
+                enabled: l_enabled,
+            },
+            motor: JointMotor {
+                target_speed: m_speed,
+                max_force: m_force,
+                enabled: m_enabled,
+            },
+            break_impulse,
+            user_data,
+        },
+        impulse,
+        accumulated_position_error: pos_error,
+        broken,
+    })
+}
+
+// ─── SoftBody & ParticleStorage serialization ───────────────────────────────
+
+pub fn serialize_soft_body(sb: &auralite_softbody::SoftBody) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_u32(&mut buf, sb.particles.len() as u32);
+    for p in &sb.particles {
+        write_vec3(&mut buf, p.position);
+        write_vec3(&mut buf, p.old_position);
+        write_vec3(&mut buf, p.velocity);
+        write_f32(&mut buf, p.inv_mass);
+        write_bool(&mut buf, p.pinned);
+    }
+    write_f32(&mut buf, sb.damping);
+    write_vec3(&mut buf, sb.wind);
+    write_bool(&mut buf, sb.aerodynamic);
+    write_typed_payload(TypeTag::SoftBody, &buf)
+}
+
+pub fn deserialize_soft_body(data: &[u8]) -> Result<auralite_softbody::SoftBody, Error> {
+    let payload = read_typed_payload(data, &mut 0, TypeTag::SoftBody)?;
+    let mut pos = 0;
+    let n_p = read_u32(payload, &mut pos)? as usize;
+    let mut particles = Vec::with_capacity(n_p);
+    for _ in 0..n_p {
+        let position = read_vec3(payload, &mut pos)?;
+        let old_position = read_vec3(payload, &mut pos)?;
+        let velocity = read_vec3(payload, &mut pos)?;
+        let inv_mass = read_f32(payload, &mut pos)?;
+        let pinned = read_bool(payload, &mut pos)?;
+        particles.push(auralite_softbody::Particle {
+            position,
+            old_position,
+            velocity,
+            inv_mass,
+            pinned,
+        });
+    }
+    let damping = read_f32(payload, &mut pos)?;
+    let wind = read_vec3(payload, &mut pos)?;
+    let aerodynamic = read_bool(payload, &mut pos)?;
+    let mut sb = auralite_softbody::SoftBody::new(damping);
+    sb.particles = particles;
+    sb.wind = wind;
+    sb.aerodynamic = aerodynamic;
+    Ok(sb)
+}
+
+pub fn serialize_particle_storage(ps: &auralite_particles::ParticleStorage) -> Vec<u8> {
+    let mut buf = Vec::new();
+    write_u32(&mut buf, ps.capacity as u32);
+    write_u32(&mut buf, ps.positions.len() as u32);
+    for i in 0..ps.positions.len() {
+        write_vec3(&mut buf, ps.positions[i]);
+        write_vec3(&mut buf, ps.velocities[i]);
+        write_f32(&mut buf, ps.lifetimes[i]);
+        write_f32(&mut buf, ps.max_lifetimes[i]);
+        write_u8(
+            &mut buf,
+            match ps.types[i] {
+                auralite_particles::ParticleType::Generic => 0,
+                auralite_particles::ParticleType::Fluid => 1,
+                auralite_particles::ParticleType::BuoyancySample => 2,
+            },
+        );
+        write_bool(&mut buf, ps.alive[i]);
+    }
+    write_typed_payload(TypeTag::ParticleStorage, &buf)
+}
+
+pub fn deserialize_particle_storage(
+    data: &[u8],
+) -> Result<auralite_particles::ParticleStorage, Error> {
+    let payload = read_typed_payload(data, &mut 0, TypeTag::ParticleStorage)?;
+    let mut pos = 0;
+    let capacity = read_u32(payload, &mut pos)? as usize;
+    let n = read_u32(payload, &mut pos)? as usize;
+    let mut ps = auralite_particles::ParticleStorage::new(capacity);
+    ps.positions.clear();
+    ps.velocities.clear();
+    ps.lifetimes.clear();
+    ps.max_lifetimes.clear();
+    ps.types.clear();
+    ps.alive.clear();
+    for _ in 0..n {
+        ps.positions.push(read_vec3(payload, &mut pos)?);
+        ps.velocities.push(read_vec3(payload, &mut pos)?);
+        ps.lifetimes.push(read_f32(payload, &mut pos)?);
+        ps.max_lifetimes.push(read_f32(payload, &mut pos)?);
+        ps.types.push(match read_u8(payload, &mut pos)? {
+            0 => auralite_particles::ParticleType::Generic,
+            1 => auralite_particles::ParticleType::Fluid,
+            2 => auralite_particles::ParticleType::BuoyancySample,
+            _ => return Err(Error::InvalidEnumDiscriminant),
+        });
+        ps.alive.push(read_bool(payload, &mut pos)?);
+    }
+    Ok(ps)
 }
 
 // ─── RNG serialization ──────────────────────────────────────────────────────
@@ -832,5 +1428,266 @@ mod tests {
         let enc = encode(&data);
         let dec = decode(&enc, 1000).unwrap();
         assert_eq!(dec.len(), data.len());
+    }
+
+    #[test]
+    fn body3_serialization_round_trip() {
+        let b = Body3 {
+            id: StableId(42),
+            kind: BodyType::Dynamic,
+            position: Vec3 {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            rotation: Quat::identity(),
+            velocity: Vec3 {
+                x: -1.0,
+                y: 0.5,
+                z: 2.0,
+            },
+            angular_velocity: Vec3 {
+                x: 0.1,
+                y: 0.2,
+                z: 0.3,
+            },
+            inv_mass: 0.2,
+            inv_inertia_diagonal: Vec3 {
+                x: 0.1,
+                y: 0.1,
+                z: 0.1,
+            },
+            colliders: vec![Collider3 {
+                shape: ColliderShape3::Sphere(auralite_geometry::Sphere3::new(1.0).unwrap()),
+                offset: Vec3::ZERO,
+                material: Material {
+                    restitution: 0.5,
+                    friction: 0.4,
+                    density: 1.0,
+                },
+                filter: CollisionFilter::default(),
+            }],
+            restitution: 0.5,
+            friction: 0.4,
+            sleeping: false,
+            force: Vec3 {
+                x: 0.0,
+                y: -9.81,
+                z: 0.0,
+            },
+            torque: Vec3::ZERO,
+            linear_damping: 0.02,
+            angular_damping: 0.03,
+            user_data: 777,
+        };
+        let data = serialize_body3(&b);
+        let restored = deserialize_body3(&data).unwrap();
+        assert_eq!(restored.id.0, b.id.0);
+        assert_eq!(restored.colliders.len(), b.colliders.len());
+        assert_eq!(restored.linear_damping, b.linear_damping);
+        assert_eq!(restored.user_data, b.user_data);
+    }
+
+    #[test]
+    fn joint3_serialization_round_trip() {
+        let j = Joint3 {
+            id: JointId(101),
+            config: JointConfig3 {
+                joint_type: JointType3::Distance,
+                body_a: BodyHandle3::new(1, 0),
+                body_b: BodyHandle3::new(2, 0),
+                anchor_a: Vec3 {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                anchor_b: Vec3 {
+                    x: -1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                limits: JointLimits {
+                    min: 0.5,
+                    max: 2.5,
+                    enabled: true,
+                },
+                motor: JointMotor {
+                    target_speed: 1.0,
+                    max_force: 50.0,
+                    enabled: true,
+                },
+                break_impulse: 10.0,
+                user_data: 555,
+            },
+            impulse: 1.23,
+            accumulated_position_error: 0.45,
+            broken: false,
+        };
+        let data = serialize_joint3(&j);
+        let restored = deserialize_joint3(&data).unwrap();
+        assert_eq!(restored.id.0, j.id.0);
+        assert_eq!(restored.config.break_impulse, j.config.break_impulse);
+        assert_eq!(restored.config.limits.max, j.config.limits.max);
+        assert_eq!(restored.impulse, j.impulse);
+    }
+
+    #[test]
+    fn softbody_serialization_round_trip() {
+        let mut sb = auralite_softbody::SoftBody::new(0.05);
+        sb.particles.push(auralite_softbody::Particle::new(
+            Vec3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            1.0,
+        ));
+        sb.wind = Vec3 {
+            x: 2.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        sb.aerodynamic = true;
+        let data = serialize_soft_body(&sb);
+        let restored = deserialize_soft_body(&data).unwrap();
+        assert_eq!(restored.particles.len(), sb.particles.len());
+        assert_eq!(restored.wind, sb.wind);
+        assert_eq!(restored.aerodynamic, sb.aerodynamic);
+    }
+
+    #[test]
+    fn particle_storage_round_trip() {
+        let mut ps = auralite_particles::ParticleStorage::new(20);
+        let _ = ps.spawn(
+            Vec3::ZERO,
+            Vec3::Y,
+            2.0,
+            auralite_particles::ParticleType::Fluid,
+        );
+        let data = serialize_particle_storage(&ps);
+        let restored = deserialize_particle_storage(&data).unwrap();
+        assert_eq!(restored.positions.len(), ps.positions.len());
+        assert_eq!(restored.types[0], auralite_particles::ParticleType::Fluid);
+    }
+
+    #[test]
+    fn world2_snapshot_round_trip_replays_bitwise() {
+        let mut w = World2::default();
+        w.add_body(
+            auralite_dynamics::BodyBuilder2::dynamic()
+                .position(Vec2 { x: 0.0, y: 5.0 })
+                .velocity(Vec2 { x: 1.0, y: 0.0 })
+                .add_collider(Collider2 {
+                    shape: ColliderShape2::Circle(auralite_geometry::Circle2::new(0.5).unwrap()),
+                    offset: Vec2::ZERO,
+                    material: Material::default(),
+                    filter: auralite_collision::CollisionFilter::default(),
+                }),
+        )
+        .unwrap();
+        for _ in 0..30 {
+            w.step(0.016).unwrap();
+        }
+        let data = serialize_world2(&w);
+        let mut w_rest = deserialize_world2(&data).unwrap();
+        for (h, b) in w.bodies_iter() {
+            let b2 = w_rest.body(h).unwrap();
+            println!(
+                "body diff pos={:?} vs {:?} rot={:?} vs {:?} vel={:?} vs {:?}",
+                b.position, b2.position, b.rotation, b2.rotation, b.velocity, b2.velocity
+            );
+        }
+        println!("hash w={} w_rest={}", w.state_hash(), w_rest.state_hash());
+        assert_eq!(w.state_hash(), w_rest.state_hash());
+        for _ in 0..30 {
+            w.step(0.016).unwrap();
+            w_rest.step(0.016).unwrap();
+        }
+        assert_eq!(
+            w.state_hash(),
+            w_rest.state_hash(),
+            "World2 restored from serialized snapshot must replay bitwise identically"
+        );
+    }
+
+    #[test]
+    fn world3_snapshot_round_trip_replays_bitwise() {
+        let mut w = World3::default();
+        let b1 = w
+            .add_body(
+                auralite_dynamics::BodyBuilder3::dynamic()
+                    .position(Vec3 {
+                        x: 0.0,
+                        y: 5.0,
+                        z: 0.0,
+                    })
+                    .velocity(Vec3 {
+                        x: 1.0,
+                        y: 0.0,
+                        z: 0.5,
+                    })
+                    .add_collider(Collider3 {
+                        shape: ColliderShape3::Sphere(
+                            auralite_geometry::Sphere3::new(0.5).unwrap(),
+                        ),
+                        offset: Vec3::ZERO,
+                        material: Material::default(),
+                        filter: auralite_collision::CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        let b2 = w
+            .add_body(
+                auralite_dynamics::BodyBuilder3::dynamic()
+                    .position(Vec3 {
+                        x: 2.0,
+                        y: 5.0,
+                        z: 0.0,
+                    })
+                    .add_collider(Collider3 {
+                        shape: ColliderShape3::Sphere(
+                            auralite_geometry::Sphere3::new(0.5).unwrap(),
+                        ),
+                        offset: Vec3::ZERO,
+                        material: Material::default(),
+                        filter: auralite_collision::CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+        w.add_joint(JointConfig3 {
+            joint_type: JointType3::Distance,
+            body_a: b1,
+            body_b: b2,
+            anchor_a: Vec3::ZERO,
+            anchor_b: Vec3::ZERO,
+            limits: JointLimits::default(),
+            motor: JointMotor::default(),
+            break_impulse: 0.0,
+            user_data: 42,
+        })
+        .unwrap();
+        for _ in 0..30 {
+            w.step(0.016).unwrap();
+        }
+        let data = serialize_world3(&w);
+        let mut w_rest = deserialize_world3(&data).unwrap();
+        for (h, b) in w.bodies_iter() {
+            let b2 = w_rest.body(h).unwrap();
+            println!(
+                "body diff pos={:?} vs {:?} rot={:?} vs {:?} vel={:?} vs {:?}",
+                b.position, b2.position, b.rotation, b2.rotation, b.velocity, b2.velocity
+            );
+        }
+        println!("hash w={} w_rest={}", w.state_hash(), w_rest.state_hash());
+        assert_eq!(w.state_hash(), w_rest.state_hash());
+        for _ in 0..30 {
+            w.step(0.016).unwrap();
+            w_rest.step(0.016).unwrap();
+        }
+        assert_eq!(
+            w.state_hash(),
+            w_rest.state_hash(),
+            "World3 restored from serialized snapshot must replay bitwise identically"
+        );
     }
 }

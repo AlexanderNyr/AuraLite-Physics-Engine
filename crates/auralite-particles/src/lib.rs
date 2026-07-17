@@ -20,8 +20,8 @@ pub struct ParticleStorage {
     pub max_lifetimes: Vec<Real>,
     pub types: Vec<ParticleType>,
     pub alive: Vec<bool>,
-    free_list: Vec<usize>,
-    capacity: usize,
+    pub free_list: Vec<usize>,
+    pub capacity: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

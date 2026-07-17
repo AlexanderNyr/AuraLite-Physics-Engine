@@ -90,6 +90,8 @@ dependencies = [
  "auralite-dynamics",
  "auralite-geometry",
  "auralite-math",
+ "auralite-particles",
+ "auralite-softbody",
 ]
 
 [[package]]

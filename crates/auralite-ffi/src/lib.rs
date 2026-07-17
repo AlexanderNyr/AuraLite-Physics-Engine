@@ -204,18 +204,317 @@ pub const CANONICAL_HEADER: &str = r##"#ifndef AURALITE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef void (*AuraliteLogCallback)(uint32_t level, const char* msg);
+typedef void (*AuraliteDebugDrawLineCallback)(float x1, float y1, float z1, float x2, float y2, float z2, uint32_t color_rgb);
+
 uint32_t auralite_api_version(void);
 uint32_t auralite_abi_version(void);
 const char* auralite_last_error(void);
+int32_t auralite_set_log_callback(AuraliteLogCallback cb);
+int32_t auralite_set_debug_draw_line_callback(AuraliteDebugDrawLineCallback cb);
 int32_t auralite_world2_create(uint64_t* out);
+int32_t auralite_world3_create(uint64_t* out);
 int32_t auralite_world2_step(uint64_t token, float dt);
+int32_t auralite_world3_step(uint64_t token, float dt);
 int32_t auralite_world2_destroy(uint64_t token);
+int32_t auralite_world3_destroy(uint64_t token);
 uint32_t auralite_world_count(void);
+int32_t auralite_world2_add_body(uint64_t token, uint8_t kind, float px, float py, float vx, float vy, float mass, uint64_t* out_body_id);
+int32_t auralite_world3_add_body(uint64_t token, uint8_t kind, float px, float py, float pz, float vx, float vy, float vz, float mass, uint64_t* out_body_id);
+int32_t auralite_world2_body_query(uint64_t token, uint64_t body_id, float* out_px, float* out_py, float* out_vx, float* out_vy, uint8_t* out_sleeping);
+int32_t auralite_world3_body_query(uint64_t token, uint64_t body_id, float* out_px, float* out_py, float* out_pz, float* out_vx, float* out_vy, float* out_vz, uint8_t* out_sleeping);
+int32_t auralite_world2_body_apply_impulse(uint64_t token, uint64_t body_id, float ix, float iy);
+int32_t auralite_world3_body_apply_impulse(uint64_t token, uint64_t body_id, float ix, float iy, float iz);
+int32_t auralite_world3_batch_query_positions(uint64_t token, const uint64_t* body_ids, uint32_t count, float* out_positions);
 #ifdef __cplusplus
 }
 #endif
 #endif /* AURALITE_H */
 "##;
+
+pub type AuraliteLogCallback = extern "C" fn(level: u32, msg: *const u8);
+pub type AuraliteDebugDrawLineCallback =
+    extern "C" fn(x1: f32, y1: f32, z1: f32, x2: f32, y2: f32, z2: f32, color_rgb: u32);
+
+static LOG_CALLBACK: OnceLock<Mutex<Option<AuraliteLogCallback>>> = OnceLock::new();
+static DRAW_LINE_CALLBACK: OnceLock<Mutex<Option<AuraliteDebugDrawLineCallback>>> = OnceLock::new();
+
+#[unsafe(no_mangle)]
+pub extern "C" fn auralite_set_log_callback(cb: Option<AuraliteLogCallback>) -> i32 {
+    boundary(|| {
+        let mut l = LOG_CALLBACK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map_err(|_| "poisoned")?;
+        *l = cb;
+        Ok(0)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn auralite_set_debug_draw_line_callback(
+    cb: Option<AuraliteDebugDrawLineCallback>,
+) -> i32 {
+    boundary(|| {
+        let mut l = DRAW_LINE_CALLBACK
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .map_err(|_| "poisoned")?;
+        *l = cb;
+        Ok(0)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn auralite_world2_add_body(
+    token: u64,
+    kind: u8,
+    px: f32,
+    py: f32,
+    vx: f32,
+    vy: f32,
+    mass: f32,
+    out_body_id: *mut u64,
+) -> i32 {
+    with_world2(token, |w| {
+        if out_body_id.is_null() {
+            return Err("null output pointer".into());
+        }
+        let bkind = match kind {
+            0 => auralite_dynamics::BodyType::Static,
+            1 => auralite_dynamics::BodyType::Kinematic,
+            _ => auralite_dynamics::BodyType::Dynamic,
+        };
+        let mut b = auralite_dynamics::BodyBuilder2::dynamic()
+            .position(auralite_math::Vec2 {
+                x: px as auralite_math::Real,
+                y: py as auralite_math::Real,
+            })
+            .velocity(auralite_math::Vec2 {
+                x: vx as auralite_math::Real,
+                y: vy as auralite_math::Real,
+            })
+            .mass(mass as auralite_math::Real);
+        b.kind = bkind;
+        let h = w.add_body(b).map_err(|_| "add body failed")?;
+        unsafe {
+            *out_body_id = (((h.index() as u64) + 1) << 32) | (h.generation() as u64);
+        }
+        Ok(0)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn auralite_world3_add_body(
+    token: u64,
+    kind: u8,
+    px: f32,
+    py: f32,
+    pz: f32,
+    vx: f32,
+    vy: f32,
+    vz: f32,
+    mass: f32,
+    out_body_id: *mut u64,
+) -> i32 {
+    with_world3(token, |w| {
+        if out_body_id.is_null() {
+            return Err("null output pointer".into());
+        }
+        let bkind = match kind {
+            0 => auralite_dynamics::BodyType::Static,
+            1 => auralite_dynamics::BodyType::Kinematic,
+            _ => auralite_dynamics::BodyType::Dynamic,
+        };
+        let mut b = auralite_dynamics::BodyBuilder3::dynamic()
+            .position(auralite_math::Vec3 {
+                x: px as auralite_math::Real,
+                y: py as auralite_math::Real,
+                z: pz as auralite_math::Real,
+            })
+            .velocity(auralite_math::Vec3 {
+                x: vx as auralite_math::Real,
+                y: vy as auralite_math::Real,
+                z: vz as auralite_math::Real,
+            })
+            .mass(mass as auralite_math::Real);
+        b.kind = bkind;
+        let h = w.add_body(b).map_err(|_| "add body failed")?;
+        unsafe {
+            *out_body_id = (((h.index() as u64) + 1) << 32) | (h.generation() as u64);
+        }
+        Ok(0)
+    })
+}
+
+#[allow(clippy::unnecessary_cast)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn auralite_world2_body_query(
+    token: u64,
+    body_id: u64,
+    out_px: *mut f32,
+    out_py: *mut f32,
+    out_vx: *mut f32,
+    out_vy: *mut f32,
+    out_sleeping: *mut u8,
+) -> i32 {
+    with_world2(token, |w| {
+        let h = auralite_dynamics::BodyHandle2::new(
+            ((body_id >> 32) as u32).wrapping_sub(1),
+            body_id as u32,
+        );
+        let b = w.body(h).map_err(|_| "invalid body handle")?;
+        unsafe {
+            if !out_px.is_null() {
+                *out_px = b.position.x as f32;
+            }
+            if !out_py.is_null() {
+                *out_py = b.position.y as f32;
+            }
+            if !out_vx.is_null() {
+                *out_vx = b.velocity.x as f32;
+            }
+            if !out_vy.is_null() {
+                *out_vy = b.velocity.y as f32;
+            }
+            if !out_sleeping.is_null() {
+                *out_sleeping = u8::from(b.sleeping);
+            }
+        }
+        Ok(0)
+    })
+}
+
+#[allow(clippy::unnecessary_cast)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn auralite_world3_body_query(
+    token: u64,
+    body_id: u64,
+    out_px: *mut f32,
+    out_py: *mut f32,
+    out_pz: *mut f32,
+    out_vx: *mut f32,
+    out_vy: *mut f32,
+    out_vz: *mut f32,
+    out_sleeping: *mut u8,
+) -> i32 {
+    with_world3(token, |w| {
+        let h = auralite_dynamics::BodyHandle3::new(
+            ((body_id >> 32) as u32).wrapping_sub(1),
+            body_id as u32,
+        );
+        let b = w.body(h).map_err(|_| "invalid body handle")?;
+        unsafe {
+            if !out_px.is_null() {
+                *out_px = b.position.x as f32;
+            }
+            if !out_py.is_null() {
+                *out_py = b.position.y as f32;
+            }
+            if !out_pz.is_null() {
+                *out_pz = b.position.z as f32;
+            }
+            if !out_vx.is_null() {
+                *out_vx = b.velocity.x as f32;
+            }
+            if !out_vy.is_null() {
+                *out_vy = b.velocity.y as f32;
+            }
+            if !out_vz.is_null() {
+                *out_vz = b.velocity.z as f32;
+            }
+            if !out_sleeping.is_null() {
+                *out_sleeping = u8::from(b.sleeping);
+            }
+        }
+        Ok(0)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn auralite_world2_body_apply_impulse(
+    token: u64,
+    body_id: u64,
+    ix: f32,
+    iy: f32,
+) -> i32 {
+    with_world2(token, |w| {
+        let h = auralite_dynamics::BodyHandle2::new(
+            ((body_id >> 32) as u32).wrapping_sub(1),
+            body_id as u32,
+        );
+        w.apply_impulse(
+            h,
+            auralite_math::Vec2 {
+                x: ix as auralite_math::Real,
+                y: iy as auralite_math::Real,
+            },
+        )
+        .map(|_| 0)
+        .map_err(|_| "invalid body handle".to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn auralite_world3_body_apply_impulse(
+    token: u64,
+    body_id: u64,
+    ix: f32,
+    iy: f32,
+    iz: f32,
+) -> i32 {
+    with_world3(token, |w| {
+        let h = auralite_dynamics::BodyHandle3::new(
+            ((body_id >> 32) as u32).wrapping_sub(1),
+            body_id as u32,
+        );
+        w.apply_impulse(
+            h,
+            auralite_math::Vec3 {
+                x: ix as auralite_math::Real,
+                y: iy as auralite_math::Real,
+                z: iz as auralite_math::Real,
+            },
+        )
+        .map(|_| 0)
+        .map_err(|_| "invalid body handle".to_string())
+    })
+}
+
+#[allow(clippy::unnecessary_cast)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn auralite_world3_batch_query_positions(
+    token: u64,
+    body_ids: *const u64,
+    count: u32,
+    out_positions: *mut f32,
+) -> i32 {
+    with_world3(token, |w| {
+        if body_ids.is_null() || out_positions.is_null() {
+            return Err("null pointer".into());
+        }
+        unsafe {
+            let ids = std::slice::from_raw_parts(body_ids, count as usize);
+            let out = std::slice::from_raw_parts_mut(out_positions, (count as usize) * 3);
+            for (i, &bid) in ids.iter().enumerate() {
+                let h = auralite_dynamics::BodyHandle3::new(
+                    ((bid >> 32) as u32).wrapping_sub(1),
+                    bid as u32,
+                );
+                if let Ok(b) = w.body(h) {
+                    out[i * 3] = b.position.x as f32;
+                    out[i * 3 + 1] = b.position.y as f32;
+                    out[i * 3 + 2] = b.position.z as f32;
+                } else {
+                    out[i * 3] = f32::NAN;
+                    out[i * 3 + 1] = f32::NAN;
+                    out[i * 3 + 2] = f32::NAN;
+                }
+            }
+        }
+        Ok(0)
+    })
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn auralite_header_string() -> *const u8 {
@@ -292,5 +591,90 @@ mod tests {
         assert_eq!(auralite_world_count(), before + 1);
         auralite_world2_destroy(t);
         assert_eq!(auralite_world_count(), before);
+    }
+
+    #[test]
+    fn ffi_world2_add_and_query_body() {
+        let mut token: u64 = 0;
+        assert_eq!(unsafe { auralite_world2_create(&raw mut token) }, 0);
+        let mut body_id: u64 = 0;
+        assert_eq!(
+            unsafe {
+                auralite_world2_add_body(token, 2, 10.0, 20.0, 1.0, 2.0, 5.0, &raw mut body_id)
+            },
+            0
+        );
+        assert_ne!(body_id, 0);
+
+        let mut px = 0.0f32;
+        let mut py = 0.0f32;
+        let mut vx = 0.0f32;
+        let mut vy = 0.0f32;
+        let mut sleep = 0u8;
+        assert_eq!(
+            unsafe {
+                auralite_world2_body_query(
+                    token,
+                    body_id,
+                    &raw mut px,
+                    &raw mut py,
+                    &raw mut vx,
+                    &raw mut vy,
+                    &raw mut sleep,
+                )
+            },
+            0
+        );
+        assert_eq!(px, 10.0);
+        assert_eq!(py, 20.0);
+        assert_eq!(vx, 1.0);
+        assert_eq!(vy, 2.0);
+
+        assert_eq!(
+            auralite_world2_body_apply_impulse(token, body_id, 5.0, 10.0),
+            0
+        );
+        assert_eq!(auralite_world2_destroy(token), 0);
+    }
+
+    #[test]
+    fn ffi_world3_add_and_batch_query_bodies() {
+        let mut token: u64 = 0;
+        assert_eq!(unsafe { auralite_world3_create(&raw mut token) }, 0);
+        let mut b1: u64 = 0;
+        let mut b2: u64 = 0;
+        assert_eq!(
+            unsafe {
+                auralite_world3_add_body(token, 2, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0, &raw mut b1)
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                auralite_world3_add_body(token, 2, 4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0, &raw mut b2)
+            },
+            0
+        );
+
+        let ids = [b1, b2];
+        let mut out_positions = [0.0f32; 6];
+        assert_eq!(
+            unsafe {
+                auralite_world3_batch_query_positions(
+                    token,
+                    ids.as_ptr(),
+                    2,
+                    out_positions.as_mut_ptr(),
+                )
+            },
+            0
+        );
+        assert_eq!(out_positions[0], 1.0);
+        assert_eq!(out_positions[1], 2.0);
+        assert_eq!(out_positions[2], 3.0);
+        assert_eq!(out_positions[3], 4.0);
+        assert_eq!(out_positions[4], 5.0);
+        assert_eq!(out_positions[5], 6.0);
+        assert_eq!(auralite_world3_destroy(token), 0);
     }
 }
