@@ -17,7 +17,6 @@
 //! GPU execution is NOT guaranteed bitwise-deterministic (Tier C at best)
 //! due to floating-point non-associativity in parallel reductions.
 //! Document determinism limits explicitly.
-#![allow(missing_docs, unsafe_code)]
 
 /// Backend abstraction for GPU compute.
 pub trait GpuBackend {

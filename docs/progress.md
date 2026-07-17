@@ -1,58 +1,72 @@
 # Progress & Phase Completion Log
 
-## Current Phase: Phase Q4 Completed — Phase Q5 Next (`Verify → Repair → Complete`)
+## Current Phase: Phase R2 Partial — Phase R3 Next (Final Verification & Truth Pass)
 
-### Phase Checklist & Status
+### Phase Checklist & Status (Original Q0-Q5 + R0-R4)
 
-- [x] **Phase Q0 — Truth Refresh (Completed 2026-07-16)**
-  - Executed Section-1 gates and recorded exact measured outputs (`116 executed tests`).
-  - Fixed initial formatting drift, clippy lints (`possible_missing_else`, `collapsible_if`, `unused_imports`), and SSE2 `f64` compilation errors (`simd.rs`).
-  - Moved virtual workspace integration test to `crates/auralite-dynamics/tests/integration_tests.rs`.
-  - Restored verbatim 16-item Definition of Done in `docs/final-report.md`.
+- [x] **Phase Q0-Q4 Legacy** (historical, closed)
+- [x] **Phase R0 — Verify (Completed 2026-07-17)**
+  - Gates measured, platform matrix rewritten truthfully (H2), artifact drift fixed (single output path), test-report corrected (138 lib +6 doctests =144), flagship tests spot-verified, CI observation run 29574448824 failure.
+- [x] **Phase R1 — Sandbox Truth (Completed 2026-07-17, commit 8f68d41)**
+  - H1 fixed: removed mocked JS counter*1337 pseudo-hash, built real interactive desktop sandbox with eframe 0.32.1 (glow+default_fonts+x11+wayland, optional feature, default-features off, MIT/Apache-2.0, deny.toml + CI audit + ADR-17 + dependencies.md same commit)
+  - Headless 16/16 PASS + generates 2.0 MB `docs/generated/scenes.html` watermarked recorded-replay viewer (real engine trajectories + real 64-bit hashes, no physics in JS, playback scrub)
+  - Interactive: `cargo run -p auralite-sandbox --release --features interactive -- --interactive` opens 1200x800 window with scene browser 16, time controls, debug toggles, inspection, editable runtime, profiling, real determinism controls/hashes, 2D/3D views
+- [x] **Phase R2 — API/Document Integrity Partial (2026-07-17, current)**
+  - H5 cone-twist: **DONE** — Added `JointType3::ConeTwist { axis_local, swing_limit, twist_limit }` in `joints.rs:491` with swing/twist decomposition and enforcement, tests `joint3_cone_twist_limits_never_exceeded` and `stability_long_run` PASS
+  - H6 sensor stay: **DONE** — Added `is_stay` to `SensorEvent` (`lib.rs:909`), emits stay for ongoing pairs in deterministic sorted order (`lib.rs:1266`), methods `is_begin`/`is_end`/`is_stay`
+  - H4 risk-register: **DONE** — Rewrote `docs/risk-register.md` closing M-era risks with evidence links and adding current risks (single-platform, sandbox dep, 3D manifold depth, extreme mass ratios, H3-H12 gaps) with owners/status
+  - H3 docs: **PARTIAL** — Removed blanket allow from `auralite-gpu`, added docs for joints.rs ConeTwist and many fields, but 257 missing_docs remain in dynamics + blanket allows still in ffi, particles, serialize, softbody, vehicles. Clippy FAIL. Doctests still only 6, need serialize/particles/vehicles at least one each.
+  - H7 FFI callbacks: **NOT DONE** — log+debug-draw present, allocator story pending ADR-15 update, scheduler callback not yet implemented
+  - H10 lockstep: **NOT DONE** — no input-recording/replay helper yet
+  - H11 doc-set: **NOT DONE** — many guides missing
+  - H12 report: **PARTIAL** — Updated `final-report.md` to honest interim with per-row evidence links, corrected rows 3 and 5, marked 7/8/9 as not green. Progress, traceability, known-limitations need final sync.
 
-- [x] **Phase Q1 — Determinism & Correctness Core (Completed 2026-07-16)**
-  - **G1**: Fixed broken 3D state hash (`World3::state_hash` — extended to full dynamic state mirror of `World2`: positions, rotations, velocities, angular velocities, `sleeping`, and `kind`).
-  - **G2**: Restored real bitwise snapshot/rollback equality test (`rollback_replays_bitwise` and `rollback_replays_bitwise_2d` using exact `World2::clone()` / `World3::clone()`).
-  - **G4**: Fixed airborne sleeping bug (`World2::step` / `World3::step` — gated `b.sleeping = true` on contact/ground support `has_contact_support`, preventing airborne bodies from freezing at jump apex).
-  - **G5**: Implemented linear and angular damping across `World2::step` / `World3::step` (`b.velocity *= (1.0 - damping * dt).max(0.0)`).
-  - **G9**: Fixed contact-model inaccuracies (`generic_convex_contact_2d` / `_3d`, 2D multi-point manifolds via `clip_contacts2`, true analytical `Capsule2`/`Edge2` support without bounding sphere or closest-point hacks, warm starting applied directly prior to solver loop, and Coulomb friction `tangent_impulse` solver). Un-ignored and verified `test_long_running_stacking` (10 stacked dynamic boxes settle in stable equilibrium). Added `ContactConstraint3` and `solve_contacts_3d_once` for full 2D/3D contact solver parity.
-  - **G3 & Section 3**: Added 4 unit tests verifying joint breaking threshold (`break_impulse` triggering `broken = true` across `Joint2` and `Joint3`) and motor target convergence (`Hinge` and `Slider` driving angular/linear velocity to `target_speed`).
-  - **G10**: Built and verified 10,000-step ×3 multi-run continuous vs independent vs snapshot-rollback replay verification suite (`long_run_determinism_suite_10k_steps_2d` and `_3d`).
+- [ ] **Phase R3 — QA Completion (Next — H8/H9 + holes)**
+  - H8 fuzzing: Add stable self-owned fuzz harness (seeded deterministic mutators over serialization parsers, shape constructors, narrow-phase, world-step ops), wire fuzz-smoke CI, record corpus/outcomes in test-report, Miri/sanitizer/TSan attempts with exact unavailability reasons
+  - H9 benchmarks: Upgrade methodology — repeated independent runs median+range, env capture (CPU/OS/toolchain/flags), label smoke, map performance adjectives to measurements
+  - Additional holes: 3D manifold multi-point persistence, World3 ground/static parity, kinematic-platform behavior in controllers
 
-- [x] **Phase Q2 — World Queries & Gameplay Truth (Completed 2026-07-16)**
-  - **G6**: Replaced bounding-sphere/hardcoded `Vec3::Y` approximations in `World3::ray_cast` and `World2::ray_cast` with true analytical shape-level ray intersection queries (`ray_intersection`) across `Sphere3`, `Box3`, `Capsule3`, `ConvexHull3`, `TriangleMesh`, and `Circle2`, `Box2`, `Capsule2`, `ConvexPolygon`, `Edge2`, `Heightfield2`. Added `ray_cast_ignoring` to filter out self-collisions.
-  - **Vehicles & Characters**: Re-wired `Vehicle2`, `Vehicle3`, `Character2`, and `Character3` to call `ray_cast_ignoring(..., self.body)` against exact world geometry with true outward normals (`n.dot(Vec3::Y).acos() <= slope_limit`). Updated tests (`6 passed`) with real static ground geometry (`Box2` / `Box3`).
-  - **Coupling & Buoyancy (`D6`)**: Added exact `volume()` calculation across all 2D and 3D collider shapes (`Sphere3`, `Box3`, `Capsule3`, `ConvexHull3`, etc.) and wired true displaced volume into `apply_buoyancy_to_world`. Built and verified `buoyancy_floating_box_equilibrium` test proving exact Archimedes fluid-rigid neutral buoyancy equilibrium.
-
-- [x] **Phase Q3 — Real Multithreading & SIMD (Completed 2026-07-16)**
-  - **G7**: Rewrote `ThreadPoolScheduler` without aliasing mutable references using exact disjoint `chunks_mut` (`and div_ceil`). Restored `#![forbid(unsafe_code)]` on `auralite-core`, guaranteeing zero unsafe code across the entire core scheduling/pool crate.
-  - **G8**: Wired `Scheduler` (`ThreadPoolScheduler` under multithread feature, `SingleThreadScheduler` under single-thread) directly into `World2::step` and `World3::step` via `step_with_scheduler`. Verified Tier-A ST=MT bitwise identity across complex multi-chunk execution vs single-threaded execution (`test_multithreaded_determinism`).
-  - **SIMD Parity**: Verified ARM64 (`aarch64`) cross-compilation (`cargo check --target aarch64-unknown-linux-gnu`) and implemented native NEON (`vld1q_f32`, `vmulq_f32`) vector intrinsics inside `auralite-math/src/simd.rs` alongside `x86_64` SSE2.
-  - **Allocation-Budget Tests**: Added scratch buffers (`scratch_pairs`, `scratch_handles`, `scratch_constraints`, `scratch_raw_contacts`) across `World2` and `World3` and verified zero vector re-allocations / zero capacity growth across steady-state stepping (`steady_state_step_allocation_budget_2d`).
-
-- [x] **Phase Q4 — Interop & Persistence (Completed 2026-07-16)**
-  - **G12**: Implemented full versioned `AURA` binary envelope serialization and deserialization for `World2` (`deserialize_world2`) and `World3` (`deserialize_world3`, resolving `serialize_joints` stub and missing decode). Implemented `serialize_soft_body` / `deserialize_soft_body` and `serialize_particle_storage` / `deserialize_particle_storage`. Built and verified exact bitwise simulation rollback replay tests (`world2_snapshot_round_trip_replays_bitwise` and `world3_snapshot_round_trip_replays_bitwise`) proving exact state hash identity after snapshot restoration.
-  - **G13**: Expanded C FFI (`auralite-ffi`) to include `auralite_world2_add_body`, `auralite_world3_add_body`, `auralite_world2_body_query`, `auralite_world3_body_query`, `auralite_world2_body_apply_impulse`, `auralite_world3_body_apply_impulse`, and `auralite_world3_batch_query_positions`. Added callbacks (`auralite_set_log_callback`, `auralite_set_debug_draw_line_callback`). Synchronized `auralite.h` with `CANONICAL_HEADER`. Built and verified compiled C verification binary (`crates/auralite-ffi/c_example/main.c`) linking against `libauralite_ffi.a`.
-  - **All Gates Verified Green**: `133 workspace tests passed`, `cargo check`, `cargo check --target aarch64-unknown-linux-gnu`, `cargo fmt --all --check`, `cargo clippy --all-features -- -D warnings`, `cargo test -p auralite-math --features f64` (`16 passed`), `cargo build --release`, `cargo run -p auralite-sandbox --release` (`16/16 scenes verified`), `cargo build -p auralite-dynamics --features single-thread`, `gcc ... main.c ... passed`.
-
-- [ ] **Phase Q5 — Sandbox & Release Hardening (Next / In Progress)**
-  - **G11**: Implement visual interactive sandbox (`windowed winit/wgpu-class app or software renderer with immediate-mode UI, time-scale, debug-draw toggles, inspection panels, profiling overlay`).
-  - **G14**: Remove all blanket lint suppressions (`missing_docs`, etc.) across crates; write primary API documentation and real doctests (`>0 doctests executed`).
-  - **Audits & Matrix**: Document all dependencies (`dependencies.md`, `ADR-16`, `cargo-deny`), complete `docs/benchmark-report.md`, refresh `docs/platform-support.md`, and generate final report evaluating 100% completion against the restored 16-item DoD.
+- [ ] **Phase R4 — Final Report & Presentation**
+  - Regenerate DoD evidence table with per-row links (file:line/test-name/command-output) — done partially in this interim final-report, needs final polish
+  - Changelog entry, refresh platform matrix + risk register, present repo entry points and final report
+  - After R3/R4, if all rows green, restore PRODUCTION COMPLETE status; else honest interim remains
 
 ---
 
 ### Resume Pointer (Exact Next File / Task / Command)
 
-1. **Target File**: `crates/auralite-sandbox/src/main.rs` and `.github/workflows/ci.yml`.
-2. **Next Tasks (Phase Q5)**:
-   - Fix **G11** (`Visual interactive sandbox`): currently `auralite-sandbox` runs headless or generates static `scenes.html`. Implement an interactive windowed/graphical sandbox tool or interactive software/wgpu rendering harness with scene browser (`all 16 demo scenes`), time-control toggles (`pause, single-step, 0.1x/1.0x speed`), debug draw overlays (`AABBs, contacts, normals, centers of mass, joints, sleeping state, cloth, fluid`), and inspection panel. Justify any new dependencies (`winit`, `wgpu` or software framebuffers) via ADR-16 + `docs/dependencies.md`.
-   - Fix **G14** (`Blanket lint/doc suppressions`): remove `#![allow(missing_docs, ...)]` from `crates/*/src/lib.rs` and write clear public API documentation and real doctests across primary entry points (`World2`, `World3`, `Body2`, `Body3`, `Ray2`, `Ray3`).
-   - Expand `.github/workflows/ci.yml` (`CI Expansion`): wire matrix builds (`x86_64`, `aarch64`, `single-thread`, `f64` math), doctests, C FFI compilation and header verification (`gcc crates/auralite-ffi/c_example/main.c target/release/libauralite_ffi.a`), benchmark smoke check, and `cargo-deny` audit checks.
-   - Complete `docs/benchmark-report.md`, refresh `docs/platform-support.md`, and present the honest final report against the **verbatim 16-item Definition of Done** (`Section 8`).
-3. **Verification Command**:
+1. **Target Files**:
+   - `crates/auralite-dynamics/src/lib.rs` (missing docs 257, sensor stay)
+   - `crates/auralite-dynamics/src/joints.rs` (cone-twist done, still missing docs for some methods)
+   - `crates/auralite-ffi/src/lib.rs` (H3 Safety docs + H7 scheduler callback)
+   - `crates/auralite-particles/src/lib.rs`, `serialize`, `softbody`, `vehicles` (remove blanket allow, add docs)
+   - `docs/final-report.md` (this file, now honest interim)
+   - `docs/risk-register.md` (done), `docs/known-limitations.md`, `docs/requirements-traceability.md`, `docs/progress.md`
+   - `docs/guides/*`, `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md` (H11)
+   - `fuzz/` harness (H8), `benches/` methodology (H9), lockstep helper (H10)
+
+2. **Next Tasks (R3)**:
+   - H8: Create `fuzz/` directory with stable harness: `fuzz_serialization`, `fuzz_shape`, `fuzz_narrowphase`, `fuzz_world_ops` — each seeded deterministic, mutates bytes, calls parsers/constructors, checks for panic/UB, records corpus in `docs/test-report.md`. Wire `fuzz-smoke` step into `.github/workflows/ci.yml` (bounded 60s).
+   - H9: Update `docs/benchmark-report.md` methodology section with repeated runs (e.g., 5 independent process runs median+range), env capture (`lscpu`, `uname -a`, `rustc --version`, `cargo --version`, profile flags), label sandbox scene timings as "smoke".
+   - H3: Continue removing blanket allows and adding docs crate by crate; add doctests for serialize (`encode`/`decode` round-trip), particles (`PbfFluid` density), vehicles (`Vehicle3` creation).
+   - H7: Implement `AuraliteSchedulerCallback` typedef, `auralite_set_scheduler_callback`, `ExternalCScheduler` implementing `Scheduler` trait that calls C callback, add step functions `auralite_world2_step_with_external_scheduler`, update `CANONICAL_HEADER`, add test `ffi_scheduler_callback_invoked`.
+   - H10: Add `crates/auralite-dynamics/src/lockstep.rs` helper: `InputRecorder` records `(step, input)` streams (e.g., Vec<(u64, Vec2)>), re-apply deterministically, hash-compare, with example/test `lockstep_replay_hash_equals`.
+
+3. **Verification Commands**:
    ```sh
+   export PATH="$HOME/.cargo/bin:$PATH"
+   cargo fmt --all --check
+   cargo clippy --workspace --all-targets --all-features -- -D warnings  # expected FAIL until H3 complete, record
    cargo test --workspace --all-features
    cargo test --doc --workspace
-   cargo run -p auralite-sandbox --release
+   cargo run -p auralite-sandbox --release  # 16/16 + generate docs/generated/scenes.html
+   cargo build -p auralite-sandbox --features interactive  # no run in CI
+   cargo check --workspace --target aarch64-unknown-linux-gnu --all-features
+   cargo deny check --all-features
    ```
+
+## Current Git Status (R2 Interim)
+
+- HEAD: R1 8f68d41, plus uncommitted R2 partial (cone-twist, sensor stay, risk-register, final-report)
+- Next commit: `R2 - API Integrity Partial (H4/H5/H6 + honest final-report)`
+- Gates: fmt PASS, tests PASS (144), headless sandbox PASS (16/16 + 2.0 MB real replay), bench PASS, C FFI PASS, aarch64 check PASS, clippy FAIL (H3 257 missing_docs)

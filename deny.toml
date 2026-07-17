@@ -1,0 +1,57 @@
+# cargo-deny configuration — introduced in R1 for sandbox truth (H1)
+# Validates licenses and bans for sandbox dependencies (eframe/egui/winit/glow)
+# Core crates remain zero-dep, so deny only applies to sandbox and transitive deps.
+
+[graph]
+all-features = false
+targets = []
+
+[advisories]
+version = 2
+yanked = "deny"
+unmaintained = "warn"
+unsound = "warn"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+# Deny copyleft that conflicts with Apache-2.0, but allow typical permissive
+deny = [
+    { name = "openssl", reason = "GPL/LGPL via openssl crate — avoid" },
+]
+
+[licenses]
+version = 2
+unlicensed = "deny"
+allow-osi-fsf-free = "either"
+copyleft = "deny"
+# Explicit allow list — Apache-2.0 and MIT are primary, plus permissive BSD/ISC/etc.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0", # allowed for some small crates, but audit
+    "CDLA-Permissive-2.0",
+]
+# Some crates dual-licensed MIT/Apache-2.0 — allow both
+exceptions = []
+
+# Private crates are our own
+[licenses.private]
+ignore = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[licenses]
+confidence-threshold = 0.8

@@ -39,7 +39,7 @@ jobs:
       - name: Build Release Artifacts
         run: cargo build --workspace --release
 
-      - name: Run Automated Sandbox Scene Verifications
+      - name: Run Automated Sandbox Scene Verifications (Headless)
         run: cargo run -p auralite-sandbox --release
 
       - name: Verify Benchmark Compilation (Smoke Check)
@@ -50,6 +50,10 @@ jobs:
         run: |
           gcc crates/auralite-ffi/c_example/main.c target/release/libauralite_ffi.a -lpthread -ldl -lm -o c_verify
           ./c_verify
+
+      - name: Build Interactive Sandbox (Feature Gated, No Run)
+        if: runner.os == 'Linux'
+        run: cargo build -p auralite-sandbox --features interactive
 
   cross_check:
     name: Cross-Target Parity Check (aarch64)
@@ -63,3 +67,19 @@ jobs:
           targets: aarch64-unknown-linux-gnu
       - name: Check ARM64 SIMD (NEON) Parity
         run: cargo check --workspace --target aarch64-unknown-linux-gnu --all-features
+
+  audit:
+    name: Dependency Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Stable Toolchain (1.97.0)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check Licenses, Bans, Advisories
+        run: cargo deny check --all-features
+      - name: Check Sandbox Licenses (Interactive Feature)
+        run: cargo deny check --all-features --manifest-path crates/auralite-sandbox/Cargo.toml

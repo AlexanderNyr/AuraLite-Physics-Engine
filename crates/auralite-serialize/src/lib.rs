@@ -1061,6 +1061,7 @@ pub fn serialize_joint3(j: &Joint3) -> Vec<u8> {
         JointType3::Weld => 3u8,
         JointType3::Hinge { .. } => 4u8,
         JointType3::Slider { .. } => 5u8,
+        JointType3::ConeTwist { .. } => 6u8,
     };
     write_u8(&mut buf, jt_disc);
     write_u64(&mut buf, j.id.0);

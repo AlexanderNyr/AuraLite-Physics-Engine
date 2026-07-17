@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+
 [dependencies]
 auralite-core = { path = "../auralite-core" }
 auralite-math = { path = "../auralite-math" }
@@ -14,5 +15,11 @@ auralite-softbody = { path = "../auralite-softbody" }
 auralite-particles = { path = "../auralite-particles" }
 auralite-vehicles = { path = "../auralite-vehicles" }
 auralite-serialize = { path = "../auralite-serialize" }
+eframe = { version = "0.32.1", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"], optional = true }
+
+[features]
+default = []
+interactive = ["dep:eframe"]
+
 [lints]
 workspace = true

@@ -903,11 +903,34 @@ pub struct Snapshot3 {
     pub states: Vec<(u64, Vec3, Quat, Vec3, Vec3, Real, Vec3, bool)>,
     pub step: u64,
 }
+/// Sensor event — begin/stay/end per step in deterministic order.
+/// H6: stay event emitted for ongoing trigger pairs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SensorEvent {
+    /// Sensor body StableId.
     pub sensor: u64,
+    /// Other body StableId.
     pub other: u64,
+    /// True if begin event, false if end (unless is_stay).
     pub began: bool,
+    /// True if this is a stay event (ongoing trigger). When is_stay=true, began is false to distinguish from begin.
+    /// Stay is emitted each step for pairs present in both prev and current sensor sets, in deterministic sorted order.
+    pub is_stay: bool,
+}
+
+impl SensorEvent {
+    /// Returns true if this is a begin event.
+    pub fn is_begin(&self) -> bool {
+        self.began && !self.is_stay
+    }
+    /// Returns true if this is an end event.
+    pub fn is_end(&self) -> bool {
+        !self.began && !self.is_stay
+    }
+    /// Returns true if this is a stay event.
+    pub fn is_stay(&self) -> bool {
+        self.is_stay
+    }
 }
 
 /// A 2D rigid body world containing bodies, joints, and spatial tree.
@@ -1036,6 +1059,7 @@ fn process_chunk2(task: &mut PairChunkTask2) {
                     sensor: ida,
                     other: idb,
                     began: true,
+                    is_stay: false,
                 });
             }
             continue;
@@ -1229,12 +1253,31 @@ impl World2 {
                 Manifold2::from_clip(c.normal, vec![(c.point, c.penetration, c.feature_id)])
             }),
         );
+        // H6: emit stay events for ongoing pairs (intersection) in deterministic sorted order
+        {
+            let mut staying: Vec<(u64, u64)> = Vec::new();
+            for key in &self.prev_sensor_pairs {
+                if current_sensor_pairs.contains(key) {
+                    staying.push(*key);
+                }
+            }
+            staying.sort_unstable();
+            for (s, o) in staying {
+                self.sensor_events.push_back(SensorEvent {
+                    sensor: s,
+                    other: o,
+                    began: false,
+                    is_stay: true,
+                });
+            }
+        }
         for prev in &self.prev_sensor_pairs {
             if !current_sensor_pairs.contains(prev) {
                 self.sensor_events.push_back(SensorEvent {
                     sensor: prev.0,
                     other: prev.1,
                     began: false,
+                    is_stay: false,
                 });
             }
         }
