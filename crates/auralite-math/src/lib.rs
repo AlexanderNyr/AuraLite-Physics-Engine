@@ -1,7 +1,7 @@
 //! Dimension-safe, finite-checked mathematics for AuraLite.
 #![allow(unsafe_code)]
 
-use core::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
+use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// Simulation scalar. The `f64` feature is mutually exclusive with `f32`.
 #[cfg(all(feature = "f64", not(feature = "f32")))]
@@ -50,7 +50,9 @@ macro_rules! vector {
         impl AddAssign for $name { fn add_assign(&mut self,rhs:Self){$(self.$field+=rhs.$field;)+} }
         impl SubAssign for $name { fn sub_assign(&mut self,rhs:Self){$(self.$field-=rhs.$field;)+} }
         impl Mul<Real> for $name { type Output=Self; fn mul(self,r:Real)->Self { Self{$($field:self.$field*r),+} } }
+        impl MulAssign<Real> for $name { fn mul_assign(&mut self,r:Real){$(self.$field*=r;)+} }
         impl Div<Real> for $name { type Output=Self; fn div(self,r:Real)->Self { Self{$($field:self.$field/r),+} } }
+        impl DivAssign<Real> for $name { fn div_assign(&mut self,r:Real){$(self.$field/=r;)+} }
         impl Neg for $name { type Output=Self; fn neg(self)->Self { Self{$($field:-self.$field),+} } }
         impl Mul for $name { type Output=Self; fn mul(self,rhs:Self)->Self { Self{$($field:self.$field*rhs.$field),+} } }
     }
@@ -89,6 +91,12 @@ impl Vec3 {
         x: 0.0,
         y: 1.0,
         z: 0.0,
+    };
+    /// Unit +Z vector.
+    pub const Z: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
     };
     /// Cross product.
     #[must_use]

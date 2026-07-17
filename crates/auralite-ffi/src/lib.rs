@@ -4,7 +4,6 @@
 #![allow(missing_docs, clippy::missing_safety_doc)]
 
 use auralite_dynamics::{World2, World3};
-use auralite_math::{Vec2, Vec3};
 use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Mutex, OnceLock};
@@ -66,17 +65,28 @@ pub extern "C" fn auralite_abi_version() -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn auralite_world2_create(out: *mut u64) -> i32 {
     boundary(|| {
-        if out.is_null() { return Err("null output pointer".into()); }
+        if out.is_null() {
+            return Err("null output pointer".into());
+        }
         let mut reg = registry().lock().map_err(|_| "registry poisoned")?;
-        let slot_idx = if let Some(i) = reg.iter().position(|s| s.world2.is_none() && s.world3.is_none()) {
+        let slot_idx = if let Some(i) = reg
+            .iter()
+            .position(|s| s.world2.is_none() && s.world3.is_none())
+        {
             reg[i].world2 = Some(World2::default());
             reg[i].generation = reg[i].generation.wrapping_add(1);
             i
         } else {
-            reg.push(WorldSlot { world2: Some(World2::default()), world3: None, generation: 0 });
+            reg.push(WorldSlot {
+                world2: Some(World2::default()),
+                world3: None,
+                generation: 0,
+            });
             reg.len() - 1
         };
-        unsafe { out.write((((slot_idx as u64) + 1) << 32) | (reg[slot_idx].generation as u64)); }
+        unsafe {
+            out.write((((slot_idx as u64) + 1) << 32) | (reg[slot_idx].generation as u64));
+        }
         Ok(0)
     })
 }
@@ -85,17 +95,28 @@ pub unsafe extern "C" fn auralite_world2_create(out: *mut u64) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn auralite_world3_create(out: *mut u64) -> i32 {
     boundary(|| {
-        if out.is_null() { return Err("null output pointer".into()); }
+        if out.is_null() {
+            return Err("null output pointer".into());
+        }
         let mut reg = registry().lock().map_err(|_| "registry poisoned")?;
-        let slot_idx = if let Some(i) = reg.iter().position(|s| s.world2.is_none() && s.world3.is_none()) {
+        let slot_idx = if let Some(i) = reg
+            .iter()
+            .position(|s| s.world2.is_none() && s.world3.is_none())
+        {
             reg[i].world3 = Some(World3::default());
             reg[i].generation = reg[i].generation.wrapping_add(1);
             i
         } else {
-            reg.push(WorldSlot { world2: None, world3: Some(World3::default()), generation: 0 });
+            reg.push(WorldSlot {
+                world2: None,
+                world3: Some(World3::default()),
+                generation: 0,
+            });
             reg.len() - 1
         };
-        unsafe { out.write((((slot_idx as u64) + 1) << 32) | (reg[slot_idx].generation as u64)); }
+        unsafe {
+            out.write((((slot_idx as u64) + 1) << 32) | (reg[slot_idx].generation as u64));
+        }
         Ok(0)
     })
 }
@@ -105,7 +126,9 @@ fn with_world2<F: FnOnce(&mut World2) -> Result<i32, String>>(token: u64, f: F) 
         let idx = ((token >> 32) as usize).wrapping_sub(1);
         let mut reg = registry().lock().map_err(|_| "registry poisoned")?;
         let slot = reg.get_mut(idx).ok_or("invalid token")?;
-        if slot.generation != (token as u32) { return Err("stale token".into()); }
+        if slot.generation != (token as u32) {
+            return Err("stale token".into());
+        }
         let w = slot.world2.as_mut().ok_or("not a world2")?;
         f(w)
     })
@@ -116,7 +139,9 @@ fn with_world3<F: FnOnce(&mut World3) -> Result<i32, String>>(token: u64, f: F) 
         let idx = ((token >> 32) as usize).wrapping_sub(1);
         let mut reg = registry().lock().map_err(|_| "registry poisoned")?;
         let slot = reg.get_mut(idx).ok_or("invalid token")?;
-        if slot.generation != (token as u32) { return Err("stale token".into()); }
+        if slot.generation != (token as u32) {
+            return Err("stale token".into());
+        }
         let w = slot.world3.as_mut().ok_or("not a world3")?;
         f(w)
     })
@@ -124,11 +149,15 @@ fn with_world3<F: FnOnce(&mut World3) -> Result<i32, String>>(token: u64, f: F) 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn auralite_world2_step(token: u64, dt: f32) -> i32 {
-    with_world2(token, |w| { w.step(dt).map(|_| 0).map_err(|e| format!("{:?}", e)) })
+    with_world2(token, |w| {
+        w.step(dt).map(|_| 0).map_err(|e| format!("{:?}", e))
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn auralite_world3_step(token: u64, dt: f32) -> i32 {
-    with_world3(token, |w| { w.step(dt).map(|_| 0).map_err(|e| format!("{:?}", e)) })
+    with_world3(token, |w| {
+        w.step(dt).map(|_| 0).map_err(|e| format!("{:?}", e))
+    })
 }
 
 fn auralite_world_destroy(token: u64) -> i32 {
@@ -136,8 +165,11 @@ fn auralite_world_destroy(token: u64) -> i32 {
         let idx = ((token >> 32) as usize).wrapping_sub(1);
         let mut reg = registry().lock().map_err(|_| "registry poisoned")?;
         let slot = reg.get_mut(idx).ok_or("invalid token")?;
-        if slot.generation != (token as u32) { return Err("stale token".into()); }
-        slot.world2 = None; slot.world3 = None;
+        if slot.generation != (token as u32) {
+            return Err("stale token".into());
+        }
+        slot.world2 = None;
+        slot.world3 = None;
         slot.generation = slot.generation.wrapping_add(1);
         Ok(0)
     })
@@ -157,7 +189,11 @@ pub extern "C" fn auralite_world3_destroy(token: u64) -> i32 {
 pub extern "C" fn auralite_world_count() -> u32 {
     registry()
         .lock()
-        .map(|r| r.iter().filter(|s| s.world2.is_some() || s.world3.is_some()).count() as u32)
+        .map(|r| {
+            r.iter()
+                .filter(|s| s.world2.is_some() || s.world3.is_some())
+                .count() as u32
+        })
         .unwrap_or(0)
 }
 

@@ -230,6 +230,39 @@ impl Box3 {
         }
         Some((lo, hi))
     }
+    /// Exact shape ray intersection with true outward normal.
+    #[must_use]
+    pub fn ray_intersection(self, ray: Ray3) -> Option<(Real, Vec3)> {
+        let (lo, hi) = self.ray_interval(ray)?;
+        if hi < 0.0 || lo > hi {
+            return None;
+        }
+        let t = if lo >= 0.0 { lo } else { hi };
+        let p = ray.origin + ray.direction * t;
+        let dx = self.half.x - p.x.abs();
+        let dy = self.half.y - p.y.abs();
+        let dz = self.half.z - p.z.abs();
+        let normal = if dx <= dy && dx <= dz {
+            Vec3 {
+                x: p.x.signum(),
+                y: 0.0,
+                z: 0.0,
+            }
+        } else if dy <= dz {
+            Vec3 {
+                x: 0.0,
+                y: p.y.signum(),
+                z: 0.0,
+            }
+        } else {
+            Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: p.z.signum(),
+            }
+        };
+        Some((t, normal))
+    }
     /// Validated component-wise scaling.
     pub fn scaled(self, scale: Vec3) -> Result<Self, GeometryError> {
         Self::new(Vec3 {
@@ -414,7 +447,7 @@ impl ConvexPolygon {
             inertia_origin += c * (a.dot(a) + a.dot(b) + b.dot(b));
         }
         let area = twice_area * 0.5;
-        centroid = centroid / (3.0 * twice_area);
+        centroid /= 3.0 * twice_area;
         let mass = area * density;
         let inertia = inertia_origin * density / 12.0 - mass * centroid.length_squared();
         Ok(MassProperties2 {
@@ -571,12 +604,41 @@ impl Box2 {
         }
         Some((lo, hi))
     }
+    /// Exact 2D box ray intersection and outward normal.
+    #[must_use]
+    pub fn ray_intersection(self, ray: auralite_math::Ray2) -> Option<(Real, Vec2)> {
+        let (lo, hi) = self.ray_interval(ray)?;
+        if hi < 0.0 || lo > hi {
+            return None;
+        }
+        let t = if lo >= 0.0 { lo } else { hi };
+        let p = ray.origin + ray.direction * t;
+        let dx = self.half.x - p.x.abs();
+        let dy = self.half.y - p.y.abs();
+        let normal = if dx <= dy {
+            Vec2 {
+                x: p.x.signum(),
+                y: 0.0,
+            }
+        } else {
+            Vec2 {
+                x: 0.0,
+                y: p.y.signum(),
+            }
+        };
+        Some((t, normal))
+    }
 }
 impl Box3 {
     /// Radius of the local origin-centered bounding sphere.
     #[must_use]
     pub fn bounding_radius(self) -> Real {
         self.half.length()
+    }
+    /// Volume of the box.
+    #[must_use]
+    pub fn volume(self) -> Real {
+        8.0 * self.half.x * self.half.y * self.half.z
     }
 }
 impl Capsule2 {
@@ -636,6 +698,15 @@ impl Capsule2 {
             })
             .chain(box_hit)
             .min_by(Real::total_cmp)
+    }
+    /// Exact 2D capsule ray intersection and outward normal.
+    #[must_use]
+    pub fn ray_intersection(self, r: auralite_math::Ray2) -> Option<(Real, Vec2)> {
+        let t = self.ray_t(r)?;
+        let p = r.origin + r.direction * t;
+        let cy = p.y.clamp(-self.half_height, self.half_height);
+        let center = Vec2 { x: 0.0, y: cy };
+        Some((t, (p - center).normalized_or(Vec2::Y)))
     }
     /// Area-density mass properties using rectangle plus full disk decomposition.
     pub fn mass_properties(self, density: Real) -> Result<MassProperties2, GeometryError> {
@@ -729,6 +800,28 @@ impl Capsule3 {
             let t = -q - disc.sqrt();
             (t >= 0.0).then_some(t)
         }
+    }
+    /// Exact shape ray intersection with outward normal.
+    #[must_use]
+    pub fn ray_intersection(self, r: auralite_math::Ray3) -> Option<(Real, Vec3)> {
+        let t = self.ray_t(r)?;
+        let p = r.origin + r.direction * t;
+        let cy = p.y.clamp(-self.half_height, self.half_height);
+        let center = Vec3 {
+            x: 0.0,
+            y: cy,
+            z: 0.0,
+        };
+        let normal = (p - center).normalized_or(Vec3::Y);
+        Some((t, normal))
+    }
+    /// Volume of the capsule.
+    #[must_use]
+    pub fn volume(self) -> Real {
+        core::f64::consts::PI as Real
+            * self.radius
+            * self.radius
+            * (2.0 * self.half_height + 4.0 / 3.0 * self.radius)
     }
     /// Volume-density mass and diagonal inertia from cylinder plus sphere decomposition. The sphere's axial placement uses the parallel-axis theorem and is a documented engineering approximation for paired hemispheres.
     pub fn mass_properties(self, density: Real) -> Result<MassProperties3, GeometryError> {
@@ -833,6 +926,20 @@ impl ConvexPolygon {
                 .ray_t(r)
             })
             .min_by(Real::total_cmp)
+    }
+    /// Exact ray intersection and outward normal across polygon edges.
+    #[must_use]
+    pub fn ray_intersection(&self, r: auralite_math::Ray2) -> Option<(Real, Vec2)> {
+        (0..self.vertices.len())
+            .filter_map(|i| {
+                advanced::Edge2::new(
+                    self.vertices[i],
+                    self.vertices[(i + 1) % self.vertices.len()],
+                )
+                .ok()?
+                .ray_intersection(r)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
     }
     /// Uniform scaling.
     pub fn scaled(&self, s: Real) -> Result<Self, GeometryError> {

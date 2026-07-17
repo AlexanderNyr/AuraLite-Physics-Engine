@@ -111,10 +111,10 @@ impl GpuEngine {
         let mut out_vel = velocities.to_vec();
         let n = positions.len() / 3;
         for i in 0..n {
-            out_vel[i*3+1] -= 9.81 * dt; // gravity
-            out_pos[i*3] += out_vel[i*3] * dt;
-            out_pos[i*3+1] += out_vel[i*3+1] * dt;
-            out_pos[i*3+2] += out_vel[i*3+2] * dt;
+            out_vel[i * 3 + 1] -= 9.81 * dt; // gravity
+            out_pos[i * 3] += out_vel[i * 3] * dt;
+            out_pos[i * 3 + 1] += out_vel[i * 3 + 1] * dt;
+            out_pos[i * 3 + 2] += out_vel[i * 3 + 2] * dt;
         }
         Ok((out_pos, out_vel))
     }
@@ -130,18 +130,18 @@ impl GpuEngine {
             let p1 = chunk[0] as usize;
             let p2 = chunk[1] as usize;
             // Simple distance constraint solve in 3D
-            let dx = out_pos[p2*3] - out_pos[p1*3];
-            let dy = out_pos[p2*3+1] - out_pos[p1*3+1];
-            let dz = out_pos[p2*3+2] - out_pos[p1*3+2];
-            let dist = (dx*dx + dy*dy + dz*dz).sqrt();
+            let dx = out_pos[p2 * 3] - out_pos[p1 * 3];
+            let dy = out_pos[p2 * 3 + 1] - out_pos[p1 * 3 + 1];
+            let dz = out_pos[p2 * 3 + 2] - out_pos[p1 * 3 + 2];
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             if dist > 0.001 {
                 let err = (dist - 0.1) / dist * 0.5;
-                out_pos[p1*3] += dx * err;
-                out_pos[p1*3+1] += dy * err;
-                out_pos[p1*3+2] += dz * err;
-                out_pos[p2*3] -= dx * err;
-                out_pos[p2*3+1] -= dy * err;
-                out_pos[p2*3+2] -= dz * err;
+                out_pos[p1 * 3] += dx * err;
+                out_pos[p1 * 3 + 1] += dy * err;
+                out_pos[p1 * 3 + 2] += dz * err;
+                out_pos[p2 * 3] -= dx * err;
+                out_pos[p2 * 3 + 1] -= dy * err;
+                out_pos[p2 * 3 + 2] -= dz * err;
             }
         }
         Ok(out_pos)

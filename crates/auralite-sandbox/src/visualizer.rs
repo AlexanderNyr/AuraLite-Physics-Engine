@@ -1,7 +1,7 @@
 //! Visualizer for AuraLite worlds.
 //! Outputs SVG representations of the simulation state.
 
-use auralite_dynamics::{World2, BodyType, ColliderShape2};
+use auralite_dynamics::{BodyType, ColliderShape2, World2};
 use auralite_math::Vec2;
 
 pub struct SvgVisualizer {
@@ -28,7 +28,7 @@ impl SvgVisualizer {
         );
         svg.push_str(r#"<rect width="100%" height="100%" fill="#);
         svg.push_str("\"#1a1a1a\" />");
-        
+
         let gy = self.offset.y;
         let ground_tag = format!(
             r#"<line x1="0" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="2" />"#,
@@ -41,7 +41,13 @@ impl SvgVisualizer {
                 let color = match b.kind {
                     BodyType::Static => "#555555",
                     BodyType::Kinematic => "#44aa99",
-                    BodyType::Dynamic => if b.sleeping { "#444466" } else { "#4499ff" },
+                    BodyType::Dynamic => {
+                        if b.sleeping {
+                            "#444466"
+                        } else {
+                            "#4499ff"
+                        }
+                    }
                 };
 
                 for c in &b.colliders {
@@ -63,7 +69,11 @@ impl SvgVisualizer {
                             let hh = bx.half_extents().y * self.scale;
                             let rect_tag = format!(
                                 r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" opacity="0.8" stroke="white" stroke-width="1" />"#,
-                                screen_x - hw, screen_y - hh, hw * 2.0, hh * 2.0, color
+                                screen_x - hw,
+                                screen_y - hh,
+                                hw * 2.0,
+                                hh * 2.0,
+                                color
                             );
                             svg.push_str(&rect_tag);
                         }

@@ -349,7 +349,7 @@ pub fn epa_penetration3(
             if nlen <= ABS_EPSILON {
                 continue;
             }
-            n = n / nlen;
+            n /= nlen;
             let d = n.dot(a);
             let dist = if d < 0.0 { -d } else { d };
             if dist < best_dist {
@@ -373,7 +373,7 @@ pub fn epa_penetration3(
             if nlen <= ABS_EPSILON {
                 return None;
             }
-            n = n / nlen;
+            n /= nlen;
             let depth = n.dot(a).abs();
             return Some(Penetration3 {
                 normal: n,
@@ -409,7 +409,7 @@ pub fn epa_penetration3(
             if nlen <= ABS_EPSILON {
                 return None;
             }
-            n = n / nlen;
+            n /= nlen;
             return Some(Penetration3 {
                 normal: n,
                 depth: n.dot(a).abs().max(0.0),
@@ -437,7 +437,7 @@ pub fn epa_penetration3(
         if nlen <= ABS_EPSILON {
             continue;
         }
-        n = n / nlen;
+        n /= nlen;
         let d = n.dot(a).abs();
         if d < best_dist {
             best_dist = d;

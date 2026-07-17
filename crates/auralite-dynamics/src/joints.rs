@@ -191,12 +191,14 @@ impl Joint2 {
                 let world_a = data.pos_a + data.rot_a.rotate(self.config.anchor_a);
                 let world_b = data.pos_b + data.rot_b.rotate(self.config.anchor_b);
                 let error = world_b - world_a;
-                let rel_vel = (data.vel_b + perp(world_b - data.pos_b) * data.ang_b) 
-                            - (data.vel_a + perp(world_a - data.pos_a) * data.ang_a);
-                
+                let rel_vel = (data.vel_b + perp(world_b - data.pos_b) * data.ang_b)
+                    - (data.vel_a + perp(world_a - data.pos_a) * data.ang_a);
+
                 let total_im = data.inv_mass_a + data.inv_mass_b;
-                if total_im <= ABS_EPSILON { return 0.0; }
-                
+                if total_im <= ABS_EPSILON {
+                    return 0.0;
+                }
+
                 let bias = error * 0.2 / 0.016666668;
                 let impulse = (bias - rel_vel) * 0.1 / total_im;
                 let imp = impulse.length();
@@ -205,7 +207,13 @@ impl Joint2 {
                     return imp;
                 }
                 self.impulse += imp;
-                crate::apply_impulse2(bodies, self.config.body_a, self.config.body_b, impulse, world_a);
+                crate::apply_impulse2(
+                    bodies,
+                    self.config.body_a,
+                    self.config.body_b,
+                    impulse,
+                    world_a,
+                );
                 imp
             }
             JointType2::Distance => {
@@ -213,17 +221,31 @@ impl Joint2 {
                 let world_b = data.pos_b + data.rot_b.rotate(self.config.anchor_b);
                 let diff = world_b - world_a;
                 let dist = diff.length();
-                if dist <= ABS_EPSILON { return 0.0; }
+                if dist <= ABS_EPSILON {
+                    return 0.0;
+                }
                 let dir = diff / dist;
                 let rest = (self.config.anchor_b - self.config.anchor_a).length();
                 let error = dist - rest;
-                
+
                 let rel_vel = (data.vel_b - data.vel_a).dot(dir);
                 let total_im = data.inv_mass_a + data.inv_mass_b;
-                if total_im <= ABS_EPSILON { return 0.0; }
-                
+                if total_im <= ABS_EPSILON {
+                    return 0.0;
+                }
+
                 let lambda = (error * 0.1 - rel_vel * 0.01) / total_im;
-                crate::apply_impulse2(bodies, self.config.body_a, self.config.body_b, dir * lambda, world_a);
+                if self.config.break_impulse > 0.0 && lambda.abs() >= self.config.break_impulse {
+                    self.broken = true;
+                    return lambda.abs();
+                }
+                crate::apply_impulse2(
+                    bodies,
+                    self.config.body_a,
+                    self.config.body_b,
+                    dir * lambda,
+                    world_a,
+                );
                 lambda.abs()
             }
             JointType2::Spring { stiffness, damping } => {
@@ -517,7 +539,7 @@ impl Joint3 {
                 }
                 let impulse = dir * error * 0.5 / total_im;
                 let imp = impulse.length();
-                if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
+                if self.config.break_impulse > 0.0 && imp >= self.config.break_impulse {
                     self.broken = true;
                     return imp;
                 }
@@ -552,11 +574,19 @@ impl Joint3 {
                 );
                 impulse.length()
             }
-            JointType3::Hinge { axis_local: _ } => {
+            JointType3::Hinge { axis_local } => {
                 let error = world_b - world_a;
                 let total_im = ba_im + bb_im;
+                let mut imp = 0.0;
                 if total_im > ABS_EPSILON {
                     let impulse = error * 0.5 / total_im;
+                    imp = impulse.length();
+                    if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
+                        self.broken = true;
+                        return imp;
+                    }
+                    self.impulse += imp;
+                    self.accumulated_position_error += imp;
                     crate::apply_impulse3(
                         bodies,
                         self.config.body_a,
@@ -565,15 +595,47 @@ impl Joint3 {
                         world_a,
                     );
                 }
-                0.0
+                if self.config.motor.enabled {
+                    let target_vel = self.config.motor.target_speed;
+                    let max_force = self.config.motor.max_force;
+                    let world_axis = ba_rot.rotate(axis_local).normalized_or(Vec3::X);
+                    if let (Some(a), Some(b)) = (
+                        bodies.get(self.config.body_a),
+                        bodies.get(self.config.body_b),
+                    ) {
+                        let rel_vel = (b.angular_velocity - a.angular_velocity).dot(world_axis);
+                        let vel_error = target_vel - rel_vel;
+                        let torque = vel_error.clamp(-max_force, max_force);
+                        let ang_imp = world_axis * torque * 0.016666668;
+                        if let Some(am) = bodies.get_mut(self.config.body_a) {
+                            if am.kind == crate::BodyType::Dynamic {
+                                am.angular_velocity -= ang_imp;
+                            }
+                        }
+                        if let Some(bm) = bodies.get_mut(self.config.body_b) {
+                            if bm.kind == crate::BodyType::Dynamic {
+                                bm.angular_velocity += ang_imp;
+                            }
+                        }
+                    }
+                }
+                imp
             }
             JointType3::Slider { axis_local } => {
                 let world_axis = ba_rot.rotate(axis_local).normalized_or(Vec3::X);
                 let offset = world_b - world_a;
                 let lateral = offset - world_axis * offset.dot(world_axis);
                 let total_im = ba_im + bb_im;
+                let mut imp = 0.0;
                 if total_im > ABS_EPSILON {
                     let impulse = lateral * 0.5 / total_im;
+                    imp = impulse.length();
+                    if self.config.break_impulse > 0.0 && imp > self.config.break_impulse {
+                        self.broken = true;
+                        return imp;
+                    }
+                    self.impulse += imp;
+                    self.accumulated_position_error += imp;
                     crate::apply_impulse3(
                         bodies,
                         self.config.body_a,
@@ -582,8 +644,190 @@ impl Joint3 {
                         world_a,
                     );
                 }
-                0.0
+                if self.config.motor.enabled {
+                    let target_vel = self.config.motor.target_speed;
+                    let max_force = self.config.motor.max_force;
+                    if let (Some(a), Some(b)) = (
+                        bodies.get(self.config.body_a),
+                        bodies.get(self.config.body_b),
+                    ) {
+                        let rel_vel = (b.velocity - a.velocity).dot(world_axis);
+                        let vel_error = target_vel - rel_vel;
+                        let force = vel_error.clamp(-max_force, max_force);
+                        let lin_imp = world_axis * force * 0.016666668;
+                        if let Some(am) = bodies.get_mut(self.config.body_a) {
+                            if am.kind == crate::BodyType::Dynamic {
+                                am.velocity -= lin_imp * am.inv_mass;
+                            }
+                        }
+                        if let Some(bm) = bodies.get_mut(self.config.body_b) {
+                            if bm.kind == crate::BodyType::Dynamic {
+                                bm.velocity += lin_imp * bm.inv_mass;
+                            }
+                        }
+                    }
+                }
+                imp
             }
         }
+    }
+
+    pub fn set_limits(&mut self, limits: JointLimits) {
+        self.config.limits = limits;
+    }
+    pub fn set_motor(&mut self, motor: JointMotor) {
+        self.config.motor = motor;
+    }
+    pub fn set_break_impulse(&mut self, impulse: Real) {
+        self.config.break_impulse = impulse;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BodyBuilder2, BodyBuilder3, World2, World3};
+    use auralite_math::{Vec2, Vec3};
+
+    #[test]
+    fn joint2_break_impulse_breaks_under_excess_force() {
+        let mut w = World2::default();
+        let b1 = w.add_body(BodyBuilder2::static_body()).unwrap();
+        let b2 = w
+            .add_body(
+                BodyBuilder2::dynamic()
+                    .position(Vec2 { x: 10.0, y: 0.0 })
+                    .velocity(Vec2 { x: 100.0, y: 0.0 }),
+            )
+            .unwrap();
+        let j = w
+            .add_joint(JointConfig2 {
+                joint_type: JointType2::Distance,
+                body_a: b1,
+                body_b: b2,
+                anchor_a: Vec2::ZERO,
+                anchor_b: Vec2::ZERO,
+                limits: JointLimits::default(),
+                motor: JointMotor::default(),
+                break_impulse: 1.0,
+                user_data: 0,
+            })
+            .unwrap();
+        for _ in 0..10 {
+            w.step(0.016).unwrap();
+        }
+        assert!(
+            w.joint(j).unwrap().broken,
+            "Joint2 should break under high impulse"
+        );
+    }
+
+    #[test]
+    fn joint3_break_impulse_breaks_under_excess_force() {
+        let mut w = World3::default();
+        let b1 = w.add_body(BodyBuilder3::static_body()).unwrap();
+        let b2 = w
+            .add_body(
+                BodyBuilder3::dynamic()
+                    .position(Vec3 {
+                        x: 10.0,
+                        y: 0.0,
+                        z: 0.0,
+                    })
+                    .velocity(Vec3 {
+                        x: 100.0,
+                        y: 0.0,
+                        z: 0.0,
+                    }),
+            )
+            .unwrap();
+        let j = w
+            .add_joint(JointConfig3 {
+                joint_type: JointType3::Distance,
+                body_a: b1,
+                body_b: b2,
+                anchor_a: Vec3::ZERO,
+                anchor_b: Vec3::ZERO,
+                limits: JointLimits::default(),
+                motor: JointMotor::default(),
+                break_impulse: 5.0,
+                user_data: 0,
+            })
+            .unwrap();
+        w.step(0.016).unwrap();
+        assert!(
+            w.joint(j).unwrap().broken,
+            "Joint3 should break under high impulse"
+        );
+    }
+
+    #[test]
+    fn joint3_hinge_motor_converges_to_target_speed() {
+        let mut w = World3::default();
+        w.gravity = Vec3::ZERO;
+        let b1 = w.add_body(BodyBuilder3::static_body()).unwrap();
+        let b2 = w.add_body(BodyBuilder3::dynamic()).unwrap();
+        let mut motor = JointMotor::default();
+        motor.enabled = true;
+        motor.target_speed = 5.0;
+        motor.max_force = 100.0;
+        w.add_joint(JointConfig3 {
+            joint_type: JointType3::Hinge {
+                axis_local: Vec3::Z,
+            },
+            body_a: b1,
+            body_b: b2,
+            anchor_a: Vec3::ZERO,
+            anchor_b: Vec3::ZERO,
+            limits: JointLimits::default(),
+            motor,
+            break_impulse: 0.0,
+            user_data: 0,
+        })
+        .unwrap();
+        for _ in 0..30 {
+            w.step(0.016).unwrap();
+        }
+        let ang_z = w.body(b2).unwrap().angular_velocity.z;
+        assert!(
+            (ang_z - 5.0).abs() < 1.0,
+            "Hinge motor must drive angular velocity, got {}",
+            ang_z
+        );
+    }
+
+    #[test]
+    fn joint3_slider_motor_converges_to_target_speed() {
+        let mut w = World3::default();
+        w.gravity = Vec3::ZERO;
+        let b1 = w.add_body(BodyBuilder3::static_body()).unwrap();
+        let b2 = w.add_body(BodyBuilder3::dynamic()).unwrap();
+        let mut motor = JointMotor::default();
+        motor.enabled = true;
+        motor.target_speed = 5.0;
+        motor.max_force = 100.0;
+        w.add_joint(JointConfig3 {
+            joint_type: JointType3::Slider {
+                axis_local: Vec3::X,
+            },
+            body_a: b1,
+            body_b: b2,
+            anchor_a: Vec3::ZERO,
+            anchor_b: Vec3::ZERO,
+            limits: JointLimits::default(),
+            motor,
+            break_impulse: 0.0,
+            user_data: 0,
+        })
+        .unwrap();
+        for _ in 0..30 {
+            w.step(0.016).unwrap();
+        }
+        let vel_x = w.body(b2).unwrap().velocity.x;
+        assert!(
+            (vel_x - 5.0).abs() < 1.0,
+            "Slider motor must drive linear velocity, got {}",
+            vel_x
+        );
     }
 }

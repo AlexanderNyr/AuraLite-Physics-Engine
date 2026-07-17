@@ -257,7 +257,7 @@ impl PbfFluid {
         for &i in indices {
             hash.insert(storage.positions[i], i);
         }
-        
+
         let mut neighbors = Vec::with_capacity(indices.len());
         let h2 = h * h;
         for &i in indices {
@@ -394,7 +394,8 @@ impl PbfFluid {
         for &i in indices {
             let vel = storage.velocities[i] + gravity * dt;
             storage.velocities[i] = vel;
-            self.predicted_positions.push(storage.positions[i] + vel * dt);
+            self.predicted_positions
+                .push(storage.positions[i] + vel * dt);
         }
 
         // Build neighbors from predicted positions
@@ -489,8 +490,11 @@ pub fn apply_buoyancy_to_world(
     gravity: Vec3,
 ) {
     let fluid_indices = storage.alive_indices();
-    let fluid_positions: Vec<Vec3> = fluid_indices.iter().map(|&i| storage.positions[i]).collect();
-    
+    let fluid_positions: Vec<Vec3> = fluid_indices
+        .iter()
+        .map(|&i| storage.positions[i])
+        .collect();
+
     // We need to iterate over all bodies in the world.
     // World3 has body_handles().
     let handles = world.body_handles();
@@ -509,8 +513,20 @@ pub fn apply_buoyancy_to_world(
                 }
             }
             if is_in_fluid {
-                let vol = 1.0; // approximation
-                let force = compute_buoyancy(body, &fluid_indices, &fluid_positions, fluid_density, vol, gravity);
+                let vol = body
+                    .colliders
+                    .iter()
+                    .map(|c| c.shape.volume())
+                    .sum::<Real>()
+                    .max(0.1);
+                let force = compute_buoyancy(
+                    body,
+                    &fluid_indices,
+                    &fluid_positions,
+                    fluid_density,
+                    vol,
+                    gravity,
+                );
                 let _ = world.apply_impulse(h, force * 0.016666668); // apply as impulse
             }
         }
@@ -887,5 +903,53 @@ mod tests {
             s.kill(idx);
         }
         assert_eq!(s.alive_count(), 0);
+    }
+
+    #[test]
+    fn buoyancy_floating_box_equilibrium() {
+        use auralite_collision::CollisionFilter;
+        use auralite_dynamics::{BodyBuilder3, Collider3, ColliderShape3, Material, World3};
+        use auralite_geometry::Box3;
+
+        let mut w = World3::default();
+        let box_shape = Box3::new(Vec3 {
+            x: 0.5,
+            y: 0.5,
+            z: 0.5,
+        })
+        .unwrap();
+        let h = w
+            .add_body(
+                BodyBuilder3::dynamic()
+                    .position(Vec3::ZERO)
+                    .mass(box_shape.volume() * 1000.0) // exact neutrally buoyant mass
+                    .add_collider(Collider3 {
+                        shape: ColliderShape3::Box(box_shape),
+                        offset: Vec3::ZERO,
+                        material: Material::default(),
+                        filter: CollisionFilter::default(),
+                    }),
+            )
+            .unwrap();
+
+        let mut storage = ParticleStorage::new(10);
+        let _ = storage.spawn(Vec3::ZERO, Vec3::ZERO, 10.0, ParticleType::Fluid);
+
+        // Apply buoyancy right before stepping
+        let gravity = Vec3 {
+            x: 0.0,
+            y: -9.81,
+            z: 0.0,
+        };
+        for _ in 0..10 {
+            apply_buoyancy_to_world(&mut w, &storage, 1000.0, gravity);
+            w.step(0.016).unwrap();
+        }
+        let vy = w.body(h).unwrap().velocity.y;
+        assert!(
+            vy.abs() < 0.1,
+            "Box with neutral density should stay at vertical equilibrium, got vy={}",
+            vy
+        );
     }
 }

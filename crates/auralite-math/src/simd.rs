@@ -3,13 +3,18 @@
 
 use crate::{Real, Vec2, Vec3};
 
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 /// Compute `a + b * c` for each component of a 3D vector.
 #[inline]
 pub fn vec3_mul_add(a: Vec3, b: Vec3, c: Real) -> Vec3 {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(feature = "f64", not(feature = "f32")))
+    ))]
     {
         if is_x86_feature_detected!("sse2") {
             return unsafe {
@@ -19,11 +24,57 @@ pub fn vec3_mul_add(a: Vec3, b: Vec3, c: Real) -> Vec3 {
                 let vr = _mm_add_ps(va, _mm_mul_ps(vb, vc));
                 let mut res = [0.0f32; 4];
                 _mm_storeu_ps(res.as_mut_ptr(), vr);
-                Vec3 { x: res[0], y: res[1], z: res[2] }
+                Vec3 {
+                    x: res[0],
+                    y: res[1],
+                    z: res[2],
+                }
             };
         }
     }
-    Vec3 { x: a.x + b.x * c, y: a.y + b.y * c, z: a.z + b.z * c }
+    #[cfg(all(target_arch = "x86_64", all(feature = "f64", not(feature = "f32"))))]
+    {
+        if is_x86_feature_detected!("sse2") {
+            return unsafe {
+                let va_xy = _mm_set_pd(a.y, a.x);
+                let vb_xy = _mm_set_pd(b.y, b.x);
+                let vc_xy = _mm_set1_pd(c);
+                let vr_xy = _mm_add_pd(va_xy, _mm_mul_pd(vb_xy, vc_xy));
+                let mut res_xy = [0.0f64; 2];
+                _mm_storeu_pd(res_xy.as_mut_ptr(), vr_xy);
+                Vec3 {
+                    x: res_xy[0],
+                    y: res_xy[1],
+                    z: a.z + b.z * c,
+                }
+            };
+        }
+    }
+    #[cfg(all(
+        target_arch = "aarch64",
+        not(all(feature = "f64", not(feature = "f32")))
+    ))]
+    {
+        if cfg!(target_feature = "neon") {
+            return unsafe {
+                let va = vld1q_f32([a.x, a.y, a.z, 0.0].as_ptr());
+                let vb = vld1q_f32([b.x, b.y, b.z, 0.0].as_ptr());
+                let vr = vmlaq_n_f32(va, vb, c);
+                let mut res = [0.0f32; 4];
+                vst1q_f32(res.as_mut_ptr(), vr);
+                Vec3 {
+                    x: res[0],
+                    y: res[1],
+                    z: res[2],
+                }
+            };
+        }
+    }
+    Vec3 {
+        x: a.x + b.x * c,
+        y: a.y + b.y * c,
+        z: a.z + b.z * c,
+    }
 }
 
 /// Dot product of two 2D vectors.
@@ -35,7 +86,10 @@ pub fn vec2_dot(a: Vec2, b: Vec2) -> Real {
 /// Dot product of two 3D vectors.
 #[inline]
 pub fn vec3_dot(a: Vec3, b: Vec3) -> Real {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(all(feature = "f64", not(feature = "f32")))
+    ))]
     {
         if is_x86_feature_detected!("sse2") {
             return unsafe {
@@ -44,6 +98,35 @@ pub fn vec3_dot(a: Vec3, b: Vec3) -> Real {
                 let vr = _mm_mul_ps(va, vb);
                 let mut res = [0.0f32; 4];
                 _mm_storeu_ps(res.as_mut_ptr(), vr);
+                res[0] + res[1] + res[2]
+            };
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", all(feature = "f64", not(feature = "f32"))))]
+    {
+        if is_x86_feature_detected!("sse2") {
+            return unsafe {
+                let va_xy = _mm_set_pd(a.y, a.x);
+                let vb_xy = _mm_set_pd(b.y, b.x);
+                let vr_xy = _mm_mul_pd(va_xy, vb_xy);
+                let mut res_xy = [0.0f64; 2];
+                _mm_storeu_pd(res_xy.as_mut_ptr(), vr_xy);
+                res_xy[0] + res_xy[1] + a.z * b.z
+            };
+        }
+    }
+    #[cfg(all(
+        target_arch = "aarch64",
+        not(all(feature = "f64", not(feature = "f32")))
+    ))]
+    {
+        if cfg!(target_feature = "neon") {
+            return unsafe {
+                let va = vld1q_f32([a.x, a.y, a.z, 0.0].as_ptr());
+                let vb = vld1q_f32([b.x, b.y, b.z, 0.0].as_ptr());
+                let vr = vmulq_f32(va, vb);
+                let mut res = [0.0f32; 4];
+                vst1q_f32(res.as_mut_ptr(), vr);
                 res[0] + res[1] + res[2]
             };
         }

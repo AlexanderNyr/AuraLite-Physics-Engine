@@ -111,7 +111,7 @@ impl SoftBody {
                         0.0
                     });
             p.velocity += acceleration * dt;
-            p.velocity = p.velocity * (1.0 - self.damping * dt).max(0.0);
+            p.velocity *= (1.0 - self.damping * dt).max(0.0);
             // Predict position:
             p.position += p.velocity * dt;
         }

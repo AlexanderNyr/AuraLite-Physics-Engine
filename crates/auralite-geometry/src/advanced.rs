@@ -92,6 +92,13 @@ impl Circle2 {
     pub fn ray_t(self, r: Ray2) -> Option<Real> {
         ray_circle(r, Vec2::ZERO, self.radius)
     }
+    /// Exact ray hit and outward normal.
+    #[must_use]
+    pub fn ray_intersection(self, r: Ray2) -> Option<(Real, Vec2)> {
+        let t = self.ray_t(r)?;
+        let p = r.origin + r.direction * t;
+        Some((t, p.normalized_or(Vec2::Y)))
+    }
     /// Mass properties.
     pub fn mass_properties(self, density: Real) -> Result<MassProperties2, GeometryError> {
         if !positive(density) {
@@ -167,6 +174,18 @@ impl Sphere3 {
     pub fn ray_t(self, r: Ray3) -> Option<Real> {
         ray_sphere(r, Vec3::ZERO, self.radius)
     }
+    /// Exact ray hit and outward normal.
+    #[must_use]
+    pub fn ray_intersection(self, r: Ray3) -> Option<(Real, Vec3)> {
+        let t = self.ray_t(r)?;
+        let p = r.origin + r.direction * t;
+        Some((t, p.normalized_or(Vec3::Y)))
+    }
+    /// Volume of the sphere.
+    #[must_use]
+    pub fn volume(self) -> Real {
+        4.0 * PI * self.radius.powi(3) / 3.0
+    }
     /// Mass properties.
     pub fn mass_properties(self, density: Real) -> Result<MassProperties3, GeometryError> {
         if !positive(density) {
@@ -202,6 +221,15 @@ impl Edge2 {
     #[must_use]
     pub const fn endpoints(self) -> (Vec2, Vec2) {
         (self.segment.a, self.segment.b)
+    }
+    /// True analytic support point.
+    #[must_use]
+    pub fn support(self, d: Vec2) -> Vec2 {
+        if self.segment.a.dot(d) >= self.segment.b.dot(d) {
+            self.segment.a
+        } else {
+            self.segment.b
+        }
     }
     /// Closest point.
     #[must_use]
@@ -245,6 +273,15 @@ impl Edge2 {
             None
         }
     }
+    /// Exact ray intersection and normal across edge segment.
+    #[must_use]
+    pub fn ray_intersection(self, ray: Ray2) -> Option<(Real, Vec2)> {
+        let t = self.ray_t(ray)?;
+        let e = self.segment.b - self.segment.a;
+        let n = Vec2 { x: e.y, y: -e.x }.normalized_or(Vec2::Y);
+        let normal = if n.dot(ray.direction) <= 0.0 { n } else { -n };
+        Some((t, normal))
+    }
     /// Uniform scaling.
     pub fn scaled(self, s: Real) -> Result<Self, GeometryError> {
         if !positive(s) {
@@ -271,6 +308,11 @@ impl Edge3 {
     #[must_use]
     pub fn closest_point(self, p: Vec3) -> Vec3 {
         self.segment.closest_point(p).0
+    }
+    /// Ray intersection (1D segment in 3D has 0 surface area).
+    #[must_use]
+    pub fn ray_intersection(self, _r: Ray3) -> Option<(Real, Vec3)> {
+        None
     }
     /// Bounds.
     #[must_use]
@@ -461,12 +503,33 @@ impl ConvexHull3 {
             })
             .min_by(Real::total_cmp)
     }
+    /// Exact ray intersection and outward normal.
+    #[must_use]
+    pub fn ray_intersection(&self, r: Ray3) -> Option<(Real, Vec3)> {
+        self.faces
+            .iter()
+            .filter_map(|f| {
+                Triangle3::new(
+                    self.vertices[f[0]],
+                    self.vertices[f[1]],
+                    self.vertices[f[2]],
+                )
+                .ok()?
+                .ray_intersection(r)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+    }
     /// Uniform scaling.
     pub fn scaled(&self, s: Real) -> Result<Self, GeometryError> {
         if !positive(s) {
             return Err(GeometryError::InvalidInput);
         }
         Self::build(&self.vertices.iter().map(|p| *p * s).collect::<Vec<_>>())
+    }
+    /// Volume of the convex hull.
+    #[must_use]
+    pub fn volume(&self) -> Real {
+        self.mass_properties(1.0).map(|m| m.mass).unwrap_or(0.0)
     }
     /// Signed-tetrahedra numerical mass properties; accurate for consistently oriented closed hull faces.
     pub fn mass_properties(&self, density: Real) -> Result<MassProperties3, GeometryError> {
@@ -494,7 +557,7 @@ impl ConvexHull3 {
         if volume.abs() <= ABS_EPSILON {
             return Err(GeometryError::InvalidPolygon);
         }
-        center = center / volume;
+        center /= volume;
         let mass = volume.abs() * density;
         let mut diag = Vec3::ZERO;
         for &p in &self.vertices {
@@ -505,7 +568,7 @@ impl ConvexHull3 {
                 z: q.x * q.x + q.y * q.y,
             };
         }
-        diag = diag * (mass / self.vertices.len() as Real);
+        diag *= mass / self.vertices.len() as Real;
         Ok(MassProperties3 {
             mass,
             center,
@@ -687,6 +750,22 @@ impl TriangleMesh {
                 .map(|x| x.0)
             })
             .min_by(Real::total_cmp)
+    }
+    /// Exact ray hit and normal across mesh triangles.
+    #[must_use]
+    pub fn ray_intersection(&self, r: Ray3) -> Option<(Real, Vec3)> {
+        self.indices
+            .iter()
+            .filter_map(|f| {
+                Triangle3::new(
+                    self.vertices[f[0] as usize],
+                    self.vertices[f[1] as usize],
+                    self.vertices[f[2] as usize],
+                )
+                .ok()?
+                .ray_intersection(r)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
     }
     /// Uniform scaling and BVH rebuild.
     pub fn scaled(&self, s: Real) -> Result<Self, GeometryError> {
@@ -1024,6 +1103,11 @@ impl Heightfield3 {
     #[must_use]
     pub fn ray_t(&self, r: Ray3) -> Option<Real> {
         self.mesh.ray_t(r)
+    }
+    /// Exact ray hit and normal.
+    #[must_use]
+    pub fn ray_intersection(&self, r: Ray3) -> Option<(Real, Vec3)> {
+        self.mesh.ray_intersection(r)
     }
     /// Uniformly scales sample spacing and heights, rebuilding acceleration.
     pub fn scaled(&self, s: Real) -> Result<Self, GeometryError> {

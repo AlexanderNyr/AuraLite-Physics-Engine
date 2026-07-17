@@ -238,10 +238,9 @@ impl DynamicTree2 {
         out.sort_unstable();
         out
     }
-    /// Canonical overlapping pairs.
-    #[must_use]
-    pub fn pairs(&self) -> Vec<(u64, u64)> {
-        let mut out = Vec::new();
+    /// Collect overlapping pairs into a pre-allocated vector without allocating.
+    pub fn collect_pairs(&self, out: &mut Vec<(u64, u64)>) {
+        out.clear();
         for (i, (a, aa)) in self.leaves.iter().enumerate() {
             for (b, bb) in &self.leaves[i + 1..] {
                 if aa.overlaps(*bb) {
@@ -249,6 +248,12 @@ impl DynamicTree2 {
                 }
             }
         }
+    }
+    /// Canonical overlapping pairs.
+    #[must_use]
+    pub fn pairs(&self) -> Vec<(u64, u64)> {
+        let mut out = Vec::new();
+        self.collect_pairs(&mut out);
         out
     }
     /// Tree height; balanced rebuild guarantees ceil(log2(n))+1 or less.
@@ -428,17 +433,22 @@ impl DynamicTree3 {
         o.sort_unstable();
         o
     }
+    /// Collect overlapping pairs into a pre-allocated vector without allocating.
+    pub fn collect_pairs(&self, out: &mut Vec<(u64, u64)>) {
+        out.clear();
+        for (i, (a, x)) in self.leaves.iter().enumerate() {
+            for (b, y) in &self.leaves[i + 1..] {
+                if x.overlaps(*y) {
+                    out.push((*a, *b));
+                }
+            }
+        }
+    }
     /// Pairs.
     #[must_use]
     pub fn pairs(&self) -> Vec<(u64, u64)> {
         let mut o = Vec::new();
-        for (i, (a, x)) in self.leaves.iter().enumerate() {
-            for (b, y) in &self.leaves[i + 1..] {
-                if x.overlaps(*y) {
-                    o.push((*a, *b))
-                }
-            }
-        }
+        self.collect_pairs(&mut o);
         o
     }
     /// Height.
