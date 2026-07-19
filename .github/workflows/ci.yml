@@ -16,11 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust Stable Toolchain (1.97.1)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-          components: rustfmt, clippy
+      # Toolchain version is pinned ONLY by rust-toolchain.toml (single source of truth).
+      # rustup reads the file and installs the pinned channel + listed components.
+      # History: run 29684150926 failed because ci.yml hardcoded `toolchain: 1.97.1`
+      # while rust-toolchain.toml still pinned 1.97.0 — rust-toolchain.toml wins over the
+      # action-installed default, so jobs silently resolved to the old channel (and the
+      # cross job lacked its target std). A hardcoded version here can drift again; `rustup
+      # show` cannot.
+      - name: Install Rust Toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
 
       - name: Verify Code Formatting
         run: cargo fmt --all --check
@@ -67,11 +71,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust Stable Toolchain & aarch64 Target
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-          targets: aarch64-unknown-linux-gnu
+      - name: Install Rust Toolchain (pinned by rust-toolchain.toml) & aarch64 Target
+        run: |
+          rustup show
+          rustup target add aarch64-unknown-linux-gnu
       - name: Check ARM64 SIMD (NEON) Parity
         run: cargo check --workspace --target aarch64-unknown-linux-gnu --all-features
 
@@ -80,10 +83,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust Stable Toolchain (1.97.1)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
+      - name: Install Rust Toolchain (pinned by rust-toolchain.toml)
+        run: rustup show
       # Pinned: 0.20.2 --locked. An unpinned install pulled a schema-drifting cargo-deny
       # that rejected deny.toml on 2026-07-17 (run 29583407674). deny.toml is written and
       # validated against exactly this version.
