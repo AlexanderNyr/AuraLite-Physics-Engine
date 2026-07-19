@@ -21,6 +21,14 @@
 - Advisories: RUSTSEC-2026-0194/0195 (quick-xml 0.39.4) ignored with written justification + review-by 2027-01-19 — build-time-only wayland-scanner, no untrusted input; upgrade blocked by pinned winit 0.30 stack.
 - `THIRD_PARTY_NOTICES.md` regenerated from the current 322-package lock (179 package/license rows over CI targets).
 
+### CI verification (observed)
+- Run `29682146269` (2026-07-19, lint/config repair): ubuntu/windows/aarch64-parity/audit **success**; macOS ARM64 failed only on the stacking-test threshold above → fixed.
+- Run **`29682753719` (2026-07-19) — ALL 5 JOBS SUCCESS**: Verify ubuntu (170 s) / windows (240 s) / macOS ARM64 (147 s / all 17 steps each), Cross-Target Parity aarch64 (43 s), Dependency Audit pinned cargo-deny 0.20.2 (133 s). https://github.com/AlexanderNyr/AuraLite-Physics-Engine/actions/runs/29682753719 — first green CI run in repo history and first honestly-verified Windows/macOS test execution.
+- Local battery `scripts/ci-local.sh` exit 0 on the same content; 151 tests (142 + 9 doctests).
+
+### Changed (2026-07-19, post-verification)
+- Toolchain pin bumped **1.97.0 → 1.97.1** (patch release, `8bab26f4f 2026-07-14`): `rust-toolchain.toml`, CI workflows (×3 jobs), CONTRIBUTING/README/scripts/docs references. Full local battery re-executed on 1.97.1 before push — strict clippy `-D warnings --all-targets --all-features` PASS (new pinned clippy accepted), 151 tests PASS, fuzz corpus hash unchanged `c16e2c7d35b19f5d`. Benchmark numbers in `docs/benchmark-report.md` remain honest 1.97.0 measurements (noted there).
+
 ## [1.0.0-rc1.1] - 2026-07-17 (R0–R3 truth & QA phases; CI run 29583407674 later found red)
 
 ### Added

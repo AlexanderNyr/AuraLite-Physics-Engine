@@ -16,10 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust Stable Toolchain (1.97.0)
+      - name: Install Rust Stable Toolchain (1.97.1)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.97.0
+          toolchain: 1.97.1
           components: rustfmt, clippy
 
       - name: Verify Code Formatting
@@ -70,7 +70,7 @@ jobs:
       - name: Install Rust Stable Toolchain & aarch64 Target
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.97.0
+          toolchain: 1.97.1
           targets: aarch64-unknown-linux-gnu
       - name: Check ARM64 SIMD (NEON) Parity
         run: cargo check --workspace --target aarch64-unknown-linux-gnu --all-features
@@ -80,10 +80,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust Stable Toolchain (1.97.0)
+      - name: Install Rust Stable Toolchain (1.97.1)
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.97.0
+          toolchain: 1.97.1
       # Pinned: 0.20.2 --locked. An unpinned install pulled a schema-drifting cargo-deny
       # that rejected deny.toml on 2026-07-17 (run 29583407674). deny.toml is written and
       # validated against exactly this version.

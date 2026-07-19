@@ -1,39 +1,52 @@
-# Risk Register — R2 Truth Pass (2026-07-17)
+# Risk Register — R4 / CI-Green Refresh (2026-07-19)
 
 ## Closed M-Era Risks (from M1/M2) — Evidence Links
 
 | Risk | Likelihood | Impact | Status / Evidence |
 |---|---|---|---|
-| Scope exceeds one execution session | Certain | Critical | **CLOSED** — Continuity via `docs/progress.md` resume pointer, phased commits R0 (f88d1ac), R1 (8f68d41) etc. Honest incremental delivery, never claimed completion while H-items open (final-report now interim). |
-| Robust convex collision degeneracy | High | High | **CLOSED** — Bounded GJK (32 iter max), EPA degenerate fallback, SAT, `clip_contacts2` multi-point clipping, `epa_agrees_with_sat_for_boxes`, `robustness_deep_penetration`, `robustness_degenerate_near_zero`, `robustness_km/mm_scale`, `robustness_plate_stacking_sat` tests (auralite-collision 30 tests). Evidence: `crates/auralite-collision/src/narrow.rs` |
-| Floating-point cross-platform drift | High | High | **CLOSED** — Tiered determinism: Tier A bitwise proven via `long_run_determinism_suite_10k_steps_2d/_3d` (10k steps x3 replay), `rollback_replays_bitwise`, `test_multithreaded_determinism` ST=MT, full state_hash hashing pos/rot/vel/sleep/kind. No Tier C claim. Evidence: `crates/auralite-dynamics/src/lib.rs:2280`, `tests/integration_tests.rs` |
-| FFI memory safety | Medium | Critical | **PARTIALLY CLOSED** — Isolated unsafe in `auralite-ffi` (pointer writes, null checks, generation-safe tokens), C header drift test `header_self_verify`, compiled C example `crates/auralite-ffi/c_example/main.c` passes. Remaining: allocator story documented in ADR-15 (global allocator embedder-wide), scheduler callback planned H7 (not yet implemented), missing_safety_doc still present (H3). |
-| Mobile/GPU SDK unavailable | Certain here | Medium | **CLOSED as Guidance-only** — Documented in `docs/platform-support.md` as Guidance-only: Android NDK absent, iOS requires macOS/Xcode. Scripts `build-android.sh`/ `build-ios.sh` exist but never executed. No overclaim. |
-| Performance architecture premature | Medium | High | **CLOSED** — Reference paths maintained, SoA vs AoS benchmark measured `cargo bench -p auralite-core` (SoA 20.99ms vs AoS 21.45ms, 1.02x/1.20x), allocation budget test `steady_state_step_allocation_budget_2d` verifies zero realloc. Full benchmark rigor (H9) pending methodology upgrade. |
+| Scope exceeds one execution session | Certain | Critical | **CLOSED** — continuity via progress.md resume pointers; phased commits; no completion claims while items open. |
+| Robust convex collision degeneracy | High | High | **CLOSED** — bounded GJK (32 iter), EPA degenerate fallback, SAT, `clip_contacts2`, robustness test suite (30 collision tests). |
+| Floating-point cross-platform drift | High | High | **CLOSED as managed** — Tier-A bitwise suite (ST=MT, 10k×3, rollback, round-trip); Tier-B divergence now *measured + documented* (see open-item row TK-2 for the residue management). |
+| FFI memory safety | Medium | Critical | **CLOSED** — 2 unsafe sites inventoried with `// SAFETY:`; generation-safe handles; header drift test; C example CI-green (ubuntu/macOS); ADR-15 allocator story; scheduler callback shipped (H7). |
+| Mobile/GPU SDK unavailable | Certain here | Medium | **CLOSED as Guidance-only** — Android/iOS honestly scoped (scripts exist, never executed). |
+| Performance architecture premature | Medium | High | **CLOSED** — SoA ≈ AoS measured (5-run medians), zero-realloc budget test. |
 
-## Current Risks (R0-R2 Open)
+## R0–R4 Risks — Disposition
 
-| Risk | Likelihood | Impact | Owner | Mitigation / Status |
-|---|---|---|---|---|
-| Single-platform verification (Linux x86-64 only) | Certain (current env) | High | QA/CI | Only Linux x86-64 verified locally (138 lib tests + 6 doctests). ARM64 cross-check via `cargo check --target aarch64-unknown-linux-gnu`. Windows/macOS CI-configured but latest observed run 29574448824 conclusion failure (fmt+clippy). No successful CI run observed. Mitigation: honest matrix in `docs/platform-support.md`, note blocker (needs Windows/macOS runners). |
-| Sandbox dependency introduction (eframe) supply-chain | Medium | High | Systems / Sandbox | Introduced in R1: `eframe 0.32.1` with default-features off (glow+default_fonts+x11+wayland), `deny.toml` allows MIT/Apache-2.0/BSD/ISC. CI job `audit` runs `cargo deny check`. Core remains zero-dep. Headless CI skips interactive feature. Mitigation done: ADR-17 + dependencies.md + deny.toml + CI audit. |
-| 3D manifold multi-point persistence depth | Medium | Medium | Collision / Solver | 2D has multi-point clipping (`clip_contacts2`), 3D uses single-point per contact (`generate_clip_points_3d` returns single point). Depth persistence not fully proven. Mitigation: note in known-limitations, add test hole in R3. |
-| Extreme mass ratios (km/mm scale, high inertia) | Medium | Medium | Numerics | Tests `robustness_km/mm_scale` finite but solver may jitter at extreme ratios. Tolerances justified, not raised-to-pass. Documented in `known-limitations.md`. |
-| Missing docs / blanket lint suppressions (H3) | Certain | Medium | SDK / Docs | `cargo clippy --workspace --all-targets --all-features -- -D warnings` FAIL (324 missing_docs in dynamics + blanket allow in ffi, gpu, particles, serialize, softbody, vehicles). Doctests: only 6 (dynamics+math) vs requirement serialize/particles/vehicles at least one each. Mitigation: R2 started fixing joints.rs docs (ConeTwist added with docs), gpu allow removed, but many remain. DoD row 7 not green. |
-| Cone-twist joint limits enforcement (H5) | High (was missing) | Medium | Constraints | **FIXED in R2**: Added `JointType3::ConeTwist { axis_local, swing_limit, twist_limit }` with swing/twist decomposition, enforcement via corrective angular impulses, tests `joint3_cone_twist_limits_never_exceeded` and `stability_long_run` pass. Evidence: `crates/auralite-dynamics/src/joints.rs:460+` |
-| Sensor stay event (H6) | High (was missing) | Low | Dynamics | **FIXED in R2**: Added `is_stay` field to `SensorEvent`, emits stay for ongoing pairs in deterministic sorted order, `is_begin`/`is_end`/`is_stay` methods. Existing begin/end preserved. Triggers scene still checks begin, now also could check stay. |
-| FFI callback incomplete (H7) | Medium | Medium | FFI / SDK | Present: log, debug-draw-line. Missing: allocator (embedder-wide global allocator, documented in ADR-15 as guidance), scheduler (external callback). Planned: `auralite_set_scheduler_callback` + `ExternalCScheduler` implementing `Scheduler` trait. Not yet implemented in R2, gap remains. |
-| Fuzzing / sanitizer absent (H8) | Certain | High | QA | No `fuzz/` targets, no Miri/sanitizer runs recorded. DoD row 8 asserts "Miri/Sanitizer/race safe" without evidence — overclaim. Need stable self-owned fuzz harness (seeded deterministic mutators over serialization, shape, narrow-phase, world-step ops) + CI fuzz-smoke + Miri/TSan where allowed or exact unavailability reason. |
-| Benchmark rigor (H9) | High | Medium | QA / Perf | Current benchmark-report single-shot sandbox wall-times (18ms stacking, etc.) labeled as smoke but presented as benchmarks. Need repeated independent runs median+range, env capture (CPU/OS/toolchain/flags), keep smoke labeled. Performance adjectives in README/docs not mapped to measurement. |
-| Lockstep API (H10) | Medium | Medium | Dynamics / SDK | Existing seed+snapshot+deterministic-step constitutes lockstep but no small input-recording/replay helper (record (step,input) streams, re-apply deterministically, hash-compare) with example/test. Planned for R2/R3. |
-| Doc-set incomplete (H11) | Certain | High | Tech Writer | Missing: Rust API guide, C FFI guide, 2D/3D tutorials, dynamics guide, constraints guide, soft-body/cloth guide, particles/fluids guide, vehicles guide, determinism/replay/rollback guide, performance/tuning guide, sandbox guide (needs write for H1 real sandbox), SECURITY.md, CONTRIBUTING.md, third-party notices (trivial zero-dep but file must exist), expand six thin guides. |
-| Final report alignment (H12) | High | Critical | Release | DoD rows 3,5,7,8 previously carried false evidence. R0/R1 fixed 3 (platform) and 5 (sandbox). Rows 7 and 8 still overclaimed. Need per-row links (file:line/test-name/command-output). Status must be honest interim until all 16 evidenced. |
+| Risk | Status 2026-07-19 | Evidence |
+|---|---|---|
+| Single-platform verification (Windows/macOS unverified) | **CLOSED** | Run `29682753719`: Verify (windows-latest) success 240 s, Verify (macos-latest ARM64) success 147 s — all 17 steps each. Failures/cancellations that previously hid evidence (29583407674) disclosed in platform-support.md. |
+| Sandbox dependency introduction (eframe) supply-chain | **CLOSED as managed** | 322-pkg lock fully audited by pinned cargo-deny 0.20.2 (`cargo deny check` exit 0, CI audit job green 133 s); every license allow-list entry written-justified; notices regenerated; core zero-dep. |
+| 3D manifold multi-point persistence depth | OPEN (low) | Known-limitations; 2D has multi-point clipping, 3D single-point — accepted low-sev with stress-scene coverage (16/16). |
+| Extreme mass ratios (km/mm scale) | OPEN (low) | Robustness tests finite; jitter documented in known-limitations. |
+| Missing docs / blanket lint suppressions (H3) | **CLOSED** | Real rustdoc everywhere; doctests 9 (serialize/particles/vehicles covered); **all 4 sandbox blanket `#![allow(clippy::all,...)]` removed 2026-07-19**, 70 hidden lints fixed; clippy `-D warnings` green with zero suppressions. |
+| Cone-twist joint limits enforcement (H5) | **CLOSED (R2)** | `joint3_cone_twist_limits_never_exceeded`, `joint3_cone_twist_stability_long_run` green (CI all OSes). |
+| Sensor stay event (H6) | **CLOSED (R2)** | `SensorEvent::is_stay`, deterministic sorted emission. |
+| FFI callback incomplete (H7) | **CLOSED (R3)** | `auralite_set_scheduler_callback` + `ExternalCScheduler`; `ffi_scheduler_callback_invoked` green. |
+| Fuzzing / sanitizer absent (H8) | **CLOSED (R3/R4)** | Stable seeded harness 1350 iters 0 panics, CI step on 3 OSes; fuzz crate passes strict clippy (the 2026-07-17 escape fixed); Miri/TSan unavailability recorded with exact reasons. |
+| Benchmark rigor (H9) | **CLOSED (R3)** | 5-run median+range + env capture; smoke vs rigorous labeled. |
+| Lockstep API (H10) | **CLOSED (R3)** | `lockstep.rs` `InputRecorder` + `lockstep_replay_hash_equals`. |
+| Doc-set incomplete (H11) | **CLOSED (R3)** | Guides + SECURITY + CONTRIBUTING + notices in tree. |
+| Final report alignment (H12) | **CLOSED (R4)** | final-report DoD rows re-graded with run-linked evidence incl. green run 29682753719. |
+| CI red-run 29583407674 (deny parse + fuzz lints + cancelled jobs) | **CLOSED (R4)** | Root causes fixed (pinned cargo-deny 0.20.2, schema-valid deny.toml, fuzz lints), `fail-fast: false` prevents hidden cancellations, `scripts/ci-local.sh` prevents gate/CI flag drift. |
+| macOS stacking-test fragility (run 29682146269) | **CLOSED (R4)** | Assertion re-anchored to measured physical envelope; run 29682753719 macOS green. |
+
+## Current Open Risks (tracked)
+
+| ID | Risk | Likelihood | Impact | Owner | Mitigation / Trigger |
+|---|---|---|---|---|---|
+| TK-1 | quick-xml 0.39.4 advisories (RUSTSEC-2026-0194/0195) in sandbox tree | Low (build-time-only, trusted XML) | Medium (if XML ever becomes untrusted) | QA/CI + Sandbox | dispositioned with justification in deny.toml/dependencies.md; **hard trigger: review-by 2027-01-19 or any eframe/winit upgrade → remove ignores, verify `cargo deny check`** |
+| TK-2 | Tier-B emergent drift surprises another assertion | Medium | Medium | QA | suite sweep done 2026-07-19 (only marginal-stack threshold was fragile); new tests rule: emergent-value assertions must use physical envelopes with measured headroom, never crisp chaos-band thresholds |
+| TK-3 | eframe/winit major upgrade (API churn in interactive.rs; clears TK-1) | Certain (eventually) | Medium | Sandbox | do on a branch; run ci-local.sh + interactive smoke; update ADR-17 addendum |
+| TK-4 | ARM64-native engine test gaps (compile-only verification) | Medium | Low | QA/CI | optional qemu-user or self-hosted ARM runner; NEON covered today by macOS ARM64 CI tests |
+| TK-5 | cargo-deny schema drift on future upgrades | Low | Medium | QA/CI | pinned 0.20.2 everywhere (CI + ci-local.sh contributing note); intentionally upgrade only after reading changelog |
+| TK-6 | Interactive GUI never *run* in CI (build-only) | Certain | Low | Sandbox | documented explicitly; manual DISPLAY smoke is the verification path (`--features interactive -- --interactive`) |
 
 ## Ownership
 
-- Architect: overall DoD truth, ADR-16/17
-- Simulation/Numerics/Collision/Solver: joints cone-twist, sensor stay, manifold depth
-- SDK/FFI: safety docs, scheduler/allocator callbacks, header drift
-- QA/Fuzz/Benchmark: fuzz harness, Miri/sanitizer, benchmark rigor
-- CI/Release: platform matrix, deny audit, changelog, final-report evidence table
-- Tech Writer: risk-register, guides, SECURITY, CONTRIBUTING, third-party notices
+- Architect: DoD truth, ADR-16/17, TK-3
+- Simulation/Numerics/Collision/Solver: TK-2, manifold/mass-ratio rows
+- SDK/FFI: safety docs, allocator/scheduler callbacks, header drift
+- QA/Fuzz/Benchmark: TK-1 (review-by), TK-2, TK-5, fuzz harness, benchmark medians
+- CI/Release: platform matrix, deny audit pinning, changelog, final-report
+- Tech Writer: risk-register, guides, notices, continuity docs freshness

@@ -8,7 +8,7 @@
 #   - C example link/run is skipped on Windows in CI; here it runs when gcc exists.
 #   - Interactive sandbox build is Linux-only in CI; here it runs when pkg-config
 #     probing succeeds (or always on Linux).
-# Requires: rustup toolchain 1.97.0 (rust-toolchain.toml), cargo-deny 0.20.2 for the
+# Requires: rustup toolchain 1.97.1 (rust-toolchain.toml), cargo-deny 0.20.2 for the
 # audit section (install: cargo install cargo-deny --version 0.20.2 --locked),
 # rustup target aarch64-unknown-linux-gnu for the cross section (optional, auto-skip).
 #

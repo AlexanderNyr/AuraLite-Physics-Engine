@@ -47,6 +47,7 @@ Three allow-list entries were added on 2026-07-19 after the full cargo-deny grap
 ## CI Audit
 
 - `.github/workflows/ci.yml` audit job installs **pinned** `cargo-deny 0.20.2` (`cargo install cargo-deny --version 0.20.2 --locked`) — an unpinned install drifted schema and rejected `deny.toml` on 2026-07-17 (run 29583407674), one of the two causes of the red run.
+- **Observed green in CI**: run `29682753719` (2026-07-19), job "Dependency Audit (cargo-deny)" — success, 133 s, https://github.com/AlexanderNyr/AuraLite-Physics-Engine/actions/runs/29682753719. Locally reproduced: `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`).
 - Single canonical invocation: `cargo deny check` at repo root. `[graph] all-features = true` in `deny.toml` resolves the full workspace feature graph **including** the sandbox `interactive` feature (eframe/winit/wayland/quick-xml tree); the former `cargo deny check --all-features [--manifest-path ...]` steps used flags that are invalid on pinned `check` and were removed (feature selection lives in `[graph]`, not the CLI).
 - Advisories, bans, licenses, sources all checked; policy text changes belong in this file + ADR-16/17.
 
@@ -94,7 +95,7 @@ Since core is zero-dep, third-party notices currently only include sandbox optio
 
 ## Reproducibility
 
-- Pinned toolchain `1.97.0` via `rust-toolchain.toml`
+- Pinned toolchain `1.97.1` via `rust-toolchain.toml`
 - `Cargo.lock` committed
 - `cargo-deny` config pinned
 - Single canonical artifact path `docs/generated/scenes.html` generated reproducibly via `cargo run -p auralite-sandbox --release` (engine-recorded JSON, no timestamp-dependent mock)

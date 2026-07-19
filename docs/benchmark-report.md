@@ -4,6 +4,8 @@
 
 All benchmarks measured on **Linux x86-64 GNU**, host **unknown CI/container**, CPU unknown (captured via `lscpu` below), OS `Linux x86_64`, toolchain **Rust stable 1.97.0** (`rust-toolchain.toml` pinned), profile `[profile.release]` `lto="thin" codegen-units=1`, flags default features (`multithread`, `f32`) unless noted.
 
+> Pin note (2026-07-19): the repository pin moved to **Rust stable 1.97.1** (patch release). The numbers below remain the honest 2026-07-16/17 measurements taken under 1.97.0 — re-measuring on 1.97.1 is flagged as a smoke-revalidation task, not silently rewritten.
+
 **Methodology (H9 upgraded)**:
 - **Repeated independent process runs**: For `soa_vs_aos` benchmark, we run `cargo bench -p auralite-core --bench soa_vs_aos` 5 times as independent processes, collect per-iteration times, report **median + range (min-max)**. This avoids single-shot noise.
 - **Environment capture**: `uname -a`, `lscpu`, `rustc --version`, `cargo --version`, `cat /proc/meminfo | head`, `env` filtered for relevant flags, recorded below.
@@ -102,7 +104,7 @@ If any adjective cannot be mapped, it must be reworded to avoid overclaim — ch
 
 - Fuzz harness: `crates/auralite-fuzz` stable, deterministic seeded RNG, 1350 iterations, 0 panics, corpus hash `c16e2c7d35b19f5d` (see `cargo run -p auralite-fuzz --release` output)
 - Corpus samples: serialization mutated envelopes, shape constructors, GJK, world-step ops
-- Sanitizer/Miri: Attempted `cargo miri test` requires nightly (current stable 1.97.0) — unavailable, recorded as exact unavailability reason in `docs/test-report.md`. TSan/ASan require nightly `-Z sanitizer` — unavailable. Documented.
+- Sanitizer/Miri: Attempted `cargo miri test` requires nightly (current stable 1.97.1) — unavailable, recorded as exact unavailability reason in `docs/test-report.md`. TSan/ASan require nightly `-Z sanitizer` — unavailable. Documented.
 - Audit: `cargo deny check` passes for licenses (see CI job `audit`)
 
 ## 7. Summary & Performance Recommendations (Honest)
