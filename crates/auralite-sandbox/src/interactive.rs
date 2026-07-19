@@ -1,17 +1,20 @@
-//! Real interactive desktop sandbox — engine-driven, no mocks.
-//! Implements DoD-5: scene browser 16 subsystems, time controls, debug-draw toggles,
-//! inspection panels, editable runtime settings, profiling overlay, real determinism controls (seed/record/replay/snapshot/rollback) showing real 64-bit state hash.
+//! Real interactive desktop sandbox & scene editor studio — engine-driven, no mocks.
+//! Implements DoD-5: scene browser 18 subsystems, interactive tool studio (select, spawn,
+//! joint wizard, impulse drag, delete), full live property inspector, outliner/hierarchy,
+//! editable runtime settings, profiling overlay, real determinism controls (snapshot/rollback/record/replay)
+//! showing real 64-bit state hash, plus full hex/binary scene save & load.
 //! Dependency: eframe (winit + glow + egui) — justified in ADR-17, default-features off, license MIT/Apache.
+#![forbid(unsafe_code)]
 
 use eframe::egui;
 
 use auralite_collision::CollisionFilter;
 use auralite_dynamics::{
-    BodyType, Collider2, Collider3, ColliderShape2, ColliderShape3, JointConfig2, JointType2,
-    Material, World2, World3,
+    BodyBuilder2, BodyBuilder3, BodyType, Collider2, Collider3, ColliderShape2, ColliderShape3,
+    JointConfig2, JointConfig3, JointId, JointType2, JointType3, Material, World2, World3,
 };
-use auralite_geometry::{Box2, Box3, Circle2, Sphere3};
-use auralite_math::{Quat, Real, Vec2, Vec3};
+use auralite_geometry::{Box2, Box3, Capsule2, Capsule3, Circle2, Sphere3};
+use auralite_math::{Quat, Real, Rot2, Vec2, Vec3};
 use auralite_particles::{ParticleStorage, ParticleType, PbfFluid};
 use auralite_softbody::{apply_self_collision, build_cloth_grid};
 use auralite_vehicles::{
@@ -22,6 +25,27 @@ use std::time::Instant;
 
 /// Bounded capture for record/replay — standing rule: iterative features stay bounded.
 const MAX_RECORD_FRAMES: usize = 100_000;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EditorTool {
+    Select,
+    SpawnBody,
+    CreateJoint,
+    ApplyImpulse,
+    Delete,
+}
+
+impl EditorTool {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EditorTool::Select => "👆 Select & Inspect",
+            EditorTool::SpawnBody => "➕ Spawn Body",
+            EditorTool::CreateJoint => "🔗 Connect Joint",
+            EditorTool::ApplyImpulse => "💨 Force / Impulse Puller",
+            EditorTool::Delete => "🗑 Delete Object",
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SceneId {
@@ -41,6 +65,8 @@ pub enum SceneId {
     Char3d,
     Serialization,
     Stress,
+    Custom2d,
+    Custom3d,
 }
 
 impl SceneId {
@@ -62,8 +88,11 @@ impl SceneId {
             SceneId::Char3d => "14. Character 3D",
             SceneId::Serialization => "15. Serialization",
             SceneId::Stress => "16. Stress 100 bodies",
+            SceneId::Custom2d => "17. Custom 2D Editor Workspace",
+            SceneId::Custom3d => "18. Custom 3D Editor Workspace",
         }
     }
+
     pub fn all() -> Vec<SceneId> {
         vec![
             SceneId::Stacking,
@@ -82,8 +111,11 @@ impl SceneId {
             SceneId::Char3d,
             SceneId::Serialization,
             SceneId::Stress,
+            SceneId::Custom2d,
+            SceneId::Custom3d,
         ]
     }
+
     pub fn is_3d(&self) -> bool {
         matches!(
             self,
@@ -96,6 +128,7 @@ impl SceneId {
                 | SceneId::Buoyancy
                 | SceneId::Fields
                 | SceneId::Particles
+                | SceneId::Custom3d
         )
     }
 }
@@ -112,15 +145,14 @@ pub struct DebugDraw {
     pub sleep: bool,
     pub softbody: bool,
     pub particles: bool,
+    pub grid: bool,
 }
 
-// World payloads are boxed: World2 is 456+ bytes inline; boxing keeps the enum small
-// and satisfies clippy::large_enum_variant without suppressions.
 pub enum ActiveWorld {
     World2(Box<World2>),
     World3(Box<World3>),
     SoftBody(Box<auralite_softbody::SoftBody>),
-    Mixed, // for scenes that have both (particles/fluid live in dedicated fields)
+    Mixed,
 }
 
 pub struct SandboxApp {
@@ -140,14 +172,13 @@ pub struct SandboxApp {
     pub iterations: usize,
     // Debug
     pub debug: DebugDraw,
-    pub selected_body: Option<u64>, // StableId
+    pub selected_body: Option<u64>,
+    pub selected_joint: Option<JointId>,
     // Determinism
     pub state_hash: u64,
     pub snapshot2: Option<auralite_dynamics::Snapshot2>,
     pub snapshot3: Option<auralite_dynamics::Snapshot3>,
     pub snapshot_soft: Option<auralite_softbody::SoftBody>,
-    // Real engine-driven recording: ordered per-frame state hashes captured from
-    // actual stepping, verified on replay against the record-start engine snapshot
     pub recorded_hashes: Vec<u64>,
     pub record_snapshot2: Option<auralite_dynamics::Snapshot2>,
     pub record_snapshot3: Option<auralite_dynamics::Snapshot3>,
@@ -155,7 +186,6 @@ pub struct SandboxApp {
     pub is_recording: bool,
     pub is_replaying: bool,
     pub replay_index: usize,
-    // Divergence evidence: (frame index, recorded hash, replayed hash) — set on mismatch
     pub replay_mismatch: Option<(usize, u64, u64)>,
     // Profiling
     pub last_step_time_us: f64,
@@ -168,12 +198,76 @@ pub struct SandboxApp {
     pub character2: Option<Character2>,
     pub character3: Option<Character3>,
     pub vehicle3: Option<Vehicle3>,
-    // Editable material for selected
+    // Editable state for selected body
+    pub edit_pos_x: f32,
+    pub edit_pos_y: f32,
+    pub edit_pos_z: f32,
+    pub edit_vel_x: f32,
+    pub edit_vel_y: f32,
+    pub edit_vel_z: f32,
+    pub edit_ang_vel_x: f32,
+    pub edit_ang_vel_y: f32,
+    pub edit_ang_vel_z: f32,
+    pub edit_mass: f32,
+    pub edit_lin_damp: f32,
+    pub edit_ang_damp: f32,
     pub edit_friction: f32,
     pub edit_restitution: f32,
-    // UI state
+    // Editor Tools & Gizmo Mode
+    pub active_tool: EditorTool,
+    // Spawn Body Configuration
+    pub spawn_shape: usize, // 0 = Circle/Sphere, 1 = Box, 2 = Capsule
+    pub spawn_radius: f32,
+    pub spawn_half_width: f32,
+    pub spawn_half_height: f32,
+    pub spawn_half_depth: f32,
+    pub spawn_body_type: usize, // 0 = Dynamic, 1 = Static, 2 = Kinematic
+    pub spawn_mass: f32,
+    pub spawn_friction: f32,
+    pub spawn_restitution: f32,
+    pub spawn_lin_damp: f32,
+    pub spawn_ang_damp: f32,
+    pub spawn_vel_x: f32,
+    pub spawn_vel_y: f32,
+    pub spawn_vel_z: f32,
+    // Joint Wizard Configuration
+    pub joint_wizard_step: usize, // 0 = Pick Body A, 1 = Pick Body B & Create
+    pub joint_wizard_body_a: Option<u64>,
+    pub joint_wizard_body_b: Option<u64>,
+    pub joint_wizard_type2: usize, // 0 = Revolute, 1 = Distance, 2 = Spring, 3 = Weld, 4 = Prismatic
+    pub joint_wizard_type3: usize, // 0 = BallSocket, 1 = Distance, 2 = Spring, 3 = Weld, 4 = Hinge, 5 = Slider, 6 = ConeTwist
+    pub joint_wizard_anchor_a_x: f32,
+    pub joint_wizard_anchor_a_y: f32,
+    pub joint_wizard_anchor_a_z: f32,
+    pub joint_wizard_anchor_b_x: f32,
+    pub joint_wizard_anchor_b_y: f32,
+    pub joint_wizard_anchor_b_z: f32,
+    pub joint_wizard_stiffness: f32,
+    pub joint_wizard_damping: f32,
+    pub joint_wizard_break_impulse: f32,
+    // Impulse Puller / Drag State
+    pub drag_body: Option<u64>,
+    pub drag_start_pos: Option<egui::Pos2>,
+    pub drag_current_pos: Option<egui::Pos2>,
+    pub impulse_multiplier: f32,
+    // Viewport & Camera controls
+    pub viewport_offset: Vec2,
+    pub viewport_scale: f32,
+    pub camera_yaw: f32,
+    pub camera_pitch: f32,
+    pub camera_dist: f32,
+    // Outliner & Search
+    pub outliner_search: String,
+    // Serialization & File Studio
+    pub serialization_buffer: String,
+    pub serialization_status: String,
+    pub save_file_path: String,
+    // UI Panels toggles
     pub show_inspection: bool,
     pub show_settings: bool,
+    pub show_outliner: bool,
+    pub show_tools: bool,
+    pub show_serialization: bool,
 }
 
 impl SandboxApp {
@@ -205,8 +299,10 @@ impl SandboxApp {
                 sleep: true,
                 softbody: true,
                 particles: true,
+                grid: true,
             },
             selected_body: None,
+            selected_joint: None,
             state_hash: 0,
             snapshot2: None,
             snapshot3: None,
@@ -227,82 +323,154 @@ impl SandboxApp {
             character2: None,
             character3: None,
             vehicle3: None,
+            edit_pos_x: 0.0,
+            edit_pos_y: 0.0,
+            edit_pos_z: 0.0,
+            edit_vel_x: 0.0,
+            edit_vel_y: 0.0,
+            edit_vel_z: 0.0,
+            edit_ang_vel_x: 0.0,
+            edit_ang_vel_y: 0.0,
+            edit_ang_vel_z: 0.0,
+            edit_mass: 1.0,
+            edit_lin_damp: 0.0,
+            edit_ang_damp: 0.0,
             edit_friction: 0.5,
-            edit_restitution: 0.0,
+            edit_restitution: 0.3,
+            active_tool: EditorTool::Select,
+            spawn_shape: 0,
+            spawn_radius: 0.5,
+            spawn_half_width: 0.5,
+            spawn_half_height: 0.5,
+            spawn_half_depth: 0.5,
+            spawn_body_type: 0,
+            spawn_mass: 1.0,
+            spawn_friction: 0.5,
+            spawn_restitution: 0.3,
+            spawn_lin_damp: 0.0,
+            spawn_ang_damp: 0.0,
+            spawn_vel_x: 0.0,
+            spawn_vel_y: 0.0,
+            spawn_vel_z: 0.0,
+            joint_wizard_step: 0,
+            joint_wizard_body_a: None,
+            joint_wizard_body_b: None,
+            joint_wizard_type2: 0,
+            joint_wizard_type3: 0,
+            joint_wizard_anchor_a_x: 0.0,
+            joint_wizard_anchor_a_y: 0.0,
+            joint_wizard_anchor_a_z: 0.0,
+            joint_wizard_anchor_b_x: 0.0,
+            joint_wizard_anchor_b_y: 0.0,
+            joint_wizard_anchor_b_z: 0.0,
+            joint_wizard_stiffness: 50.0,
+            joint_wizard_damping: 5.0,
+            joint_wizard_break_impulse: 0.0,
+            drag_body: None,
+            drag_start_pos: None,
+            drag_current_pos: None,
+            impulse_multiplier: 5.0,
+            viewport_offset: Vec2 { x: 0.0, y: 0.0 },
+            viewport_scale: 30.0,
+            camera_yaw: 0.4,
+            camera_pitch: 0.3,
+            camera_dist: 25.0,
+            outliner_search: String::new(),
+            serialization_buffer: String::new(),
+            serialization_status: "Ready for scene export / import.".to_string(),
+            save_file_path: "editor_scene.aura".to_string(),
             show_inspection: true,
-            show_settings: true,
+            show_settings: false,
+            show_outliner: true,
+            show_tools: true,
+            show_serialization: false,
         };
         app.restart_scene();
         app
     }
 
     pub fn restart_scene(&mut self) {
+        self.paused = false;
         self.step_count = 0;
         self.sim_time = 0.0;
-        self.state_hash = 0;
-        self.snapshot2 = None;
-        self.snapshot3 = None;
-        self.snapshot_soft = None;
-        self.recorded_hashes.clear();
-        self.record_snapshot2 = None;
-        self.record_snapshot3 = None;
-        self.record_snapshot_soft = None;
-        self.is_recording = false;
-        self.is_replaying = false;
-        self.replay_index = 0;
-        self.replay_mismatch = None;
+        self.selected_body = None;
+        self.selected_joint = None;
         self.particle_storage = None;
         self.fluid = None;
         self.cloth_particles_clone = None;
         self.character2 = None;
         self.character3 = None;
         self.vehicle3 = None;
-        self.selected_body = None;
+        self.is_recording = false;
+        self.is_replaying = false;
+        self.recorded_hashes.clear();
+        self.replay_mismatch = None;
+        self.joint_wizard_step = 0;
+        self.joint_wizard_body_a = None;
+        self.joint_wizard_body_b = None;
+        self.drag_body = None;
+        self.drag_start_pos = None;
+        self.drag_current_pos = None;
+        self.viewport_offset = Vec2::ZERO;
+
         match self.scene {
             SceneId::Stacking => {
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
                 w.set_gravity(self.gravity2).ok();
                 w.solver_iterations = self.iterations as u16;
-                let ground =
-                    auralite_dynamics::BodyBuilder2::static_body().add_collider(Collider2 {
-                        shape: ColliderShape2::Box(Box2::new(Vec2 { x: 10.0, y: 0.5 }).unwrap()),
-                        offset: Vec2::ZERO,
-                        material: Material {
-                            restitution: 0.0,
-                            friction: 0.8,
-                            density: 1.0,
-                        },
-                        filter: CollisionFilter::default(),
-                    });
-                w.add_body(ground).ok();
-                for i in 0..5 {
-                    let x = (i as Real - 2.0) * 1.1;
-                    let y = 1.0 + i as Real * 1.1;
-                    let b = auralite_dynamics::BodyBuilder2::dynamic()
-                        .position(Vec2 { x, y })
+                w.add_body(
+                    BodyBuilder2::static_body()
+                        .position(Vec2 { x: 0.0, y: -0.5 })
                         .add_collider(Collider2 {
-                            shape: ColliderShape2::Box(Box2::new(Vec2 { x: 0.5, y: 0.5 }).unwrap()),
+                            shape: ColliderShape2::Box(
+                                Box2::new(Vec2 { x: 15.0, y: 0.5 }).unwrap(),
+                            ),
                             offset: Vec2::ZERO,
                             material: Material {
-                                restitution: 0.0,
-                                friction: 0.8,
+                                friction: 0.6,
+                                restitution: 0.1,
                                 density: 1.0,
                             },
                             filter: CollisionFilter::default(),
-                        });
-                    w.add_body(b).ok();
+                        }),
+                )
+                .ok();
+                for i in 0..10 {
+                    let y = 0.6 + i as Real * 1.1;
+                    w.add_body(
+                        BodyBuilder2::dynamic()
+                            .position(Vec2 {
+                                x: (i % 2) as Real * 0.02,
+                                y,
+                            })
+                            .mass(1.0)
+                            .add_collider(Collider2 {
+                                shape: ColliderShape2::Box(
+                                    Box2::new(Vec2 { x: 0.5, y: 0.5 }).unwrap(),
+                                ),
+                                offset: Vec2::ZERO,
+                                material: Material {
+                                    friction: 0.5,
+                                    restitution: 0.0,
+                                    density: 1.0,
+                                },
+                                filter: CollisionFilter::default(),
+                            }),
+                    )
+                    .ok();
                 }
-                self.state_hash = w.state_hash();
                 self.world = ActiveWorld::World2(Box::new(w));
             }
             SceneId::Joints => {
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
                 w.set_gravity(self.gravity2).ok();
                 w.solver_iterations = self.iterations as u16;
                 let mut handles = Vec::new();
                 for i in 0..11 {
                     let y = 5.0 + (10 - i) as Real * 0.8;
-                    let b = auralite_dynamics::BodyBuilder2::dynamic()
+                    let b = BodyBuilder2::dynamic()
                         .position(Vec2 { x: 0.0, y })
                         .mass(if i % 2 == 0 { 1.0 } else { 0.5 })
                         .add_collider(Collider2 {
@@ -326,10 +494,11 @@ impl SandboxApp {
                 self.world = ActiveWorld::World2(Box::new(w));
             }
             SceneId::Ccd => {
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
                 w.set_gravity(self.gravity2).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder2::dynamic()
+                    BodyBuilder2::dynamic()
                         .position(Vec2 { x: 0.0, y: 10.0 })
                         .velocity(Vec2 { x: 0.0, y: -20.0 })
                         .add_collider(Collider2 {
@@ -341,7 +510,7 @@ impl SandboxApp {
                 )
                 .ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder2::static_body()
+                    BodyBuilder2::static_body()
                         .position(Vec2 { x: 0.0, y: -0.5 })
                         .add_collider(Collider2 {
                             shape: ColliderShape2::Box(
@@ -356,9 +525,10 @@ impl SandboxApp {
                 self.world = ActiveWorld::World2(Box::new(w));
             }
             SceneId::Triggers => {
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
                 w.set_gravity(Vec2::ZERO).ok();
-                let sensor = auralite_dynamics::BodyBuilder2::dynamic()
+                let sensor = BodyBuilder2::dynamic()
                     .position(Vec2 { x: 0.0, y: 0.0 })
                     .velocity(Vec2 { x: 1.0, y: 0.0 })
                     .add_collider(Collider2 {
@@ -371,7 +541,7 @@ impl SandboxApp {
                         },
                     });
                 w.add_body(sensor).ok();
-                let other = auralite_dynamics::BodyBuilder2::static_body()
+                let other = BodyBuilder2::static_body()
                     .position(Vec2 { x: 5.0, y: 0.0 })
                     .add_collider(Collider2 {
                         shape: ColliderShape2::Circle(Circle2::new(1.0).unwrap()),
@@ -383,10 +553,11 @@ impl SandboxApp {
                 self.world = ActiveWorld::World2(Box::new(w));
             }
             SceneId::Replay => {
+                self.viewport_scale = 18.0;
                 let mut w = World3::default();
                 w.set_gravity(self.gravity3).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder3::dynamic()
+                    BodyBuilder3::dynamic()
                         .position(Vec3 {
                             x: 1.0,
                             y: 10.0,
@@ -403,6 +574,7 @@ impl SandboxApp {
                 self.world = ActiveWorld::World3(Box::new(w));
             }
             SceneId::Cloth => {
+                self.viewport_scale = 22.0;
                 let cloth = build_cloth_grid(
                     8,
                     8,
@@ -427,13 +599,14 @@ impl SandboxApp {
                 self.world = ActiveWorld::SoftBody(Box::new(cloth));
             }
             SceneId::SelfCollision => {
+                self.viewport_scale = 22.0;
                 let cloth = build_cloth_grid(
                     6,
                     6,
-                    0.15,
+                    0.2,
                     Vec3 {
-                        x: -0.4,
-                        y: 0.7,
+                        x: -0.5,
+                        y: 1.0,
                         z: 0.0,
                     },
                     Vec3 {
@@ -442,8 +615,8 @@ impl SandboxApp {
                         z: 1.0,
                     },
                     Vec3::X,
-                    false,
-                    2.0,
+                    true,
+                    3.0,
                     0.1,
                     1.0,
                     0.01,
@@ -451,58 +624,60 @@ impl SandboxApp {
                 self.world = ActiveWorld::SoftBody(Box::new(cloth));
             }
             SceneId::Particles => {
-                let storage = ParticleStorage::new(200);
+                self.viewport_scale = 16.0;
+                let mut storage = ParticleStorage::new(500);
+                for i in 0..50 {
+                    storage.spawn(
+                        Vec3 {
+                            x: (i % 10) as Real * 0.2 - 1.0,
+                            y: 2.0 + (i / 10) as Real * 0.2,
+                            z: 0.0,
+                        },
+                        Vec3 {
+                            x: 0.5,
+                            y: 2.0,
+                            z: 0.0,
+                        },
+                        5.0,
+                        ParticleType::Generic,
+                    );
+                }
                 self.particle_storage = Some(storage);
                 self.world = ActiveWorld::Mixed;
             }
             SceneId::Fluid => {
+                self.viewport_scale = 16.0;
                 let mut storage = ParticleStorage::new(200);
-                for i in 0..5 {
-                    for j in 0..5 {
-                        let pos = Vec3 {
-                            x: i as Real * 0.12,
-                            y: j as Real * 0.12 + 1.0,
-                            z: 0.0,
-                        };
-                        storage.spawn(pos, Vec3::ZERO, 10.0, ParticleType::Fluid);
+                for x in 0..5 {
+                    for y in 0..5 {
+                        storage.spawn(
+                            Vec3 {
+                                x: x as Real * 0.2 - 0.5,
+                                y: y as Real * 0.2 + 1.0,
+                                z: 0.0,
+                            },
+                            Vec3::ZERO,
+                            100.0,
+                            ParticleType::Fluid,
+                        );
                     }
                 }
                 self.particle_storage = Some(storage);
-                self.fluid = Some(PbfFluid::new(1000.0, 0.06, 0.1, 0.01));
+                self.fluid = Some(PbfFluid::new(1000.0, 0.1, 50.0, 0.01));
                 self.world = ActiveWorld::Mixed;
             }
             SceneId::Buoyancy => {
+                self.viewport_scale = 18.0;
                 let mut w = World3::default();
                 w.set_gravity(self.gravity3).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder3::static_body()
+                    BodyBuilder3::dynamic()
                         .position(Vec3 {
                             x: 0.0,
-                            y: -0.5,
+                            y: 0.0,
                             z: 0.0,
                         })
-                        .add_collider(Collider3 {
-                            shape: ColliderShape3::Box(
-                                Box3::new(Vec3 {
-                                    x: 10.0,
-                                    y: 0.5,
-                                    z: 10.0,
-                                })
-                                .unwrap(),
-                            ),
-                            offset: Vec3::ZERO,
-                            material: Material::default(),
-                            filter: CollisionFilter::default(),
-                        }),
-                )
-                .ok();
-                w.add_body(
-                    auralite_dynamics::BodyBuilder3::dynamic()
-                        .position(Vec3 {
-                            x: 0.0,
-                            y: 1.0,
-                            z: 0.0,
-                        })
+                        .mass(10.0)
                         .add_collider(Collider3 {
                             shape: ColliderShape3::Box(
                                 Box3::new(Vec3 {
@@ -513,7 +688,10 @@ impl SandboxApp {
                                 .unwrap(),
                             ),
                             offset: Vec3::ZERO,
-                            material: Material::default(),
+                            material: Material {
+                                density: 200.0,
+                                ..Default::default()
+                            },
                             filter: CollisionFilter::default(),
                         }),
                 )
@@ -521,70 +699,122 @@ impl SandboxApp {
                 self.world = ActiveWorld::World3(Box::new(w));
             }
             SceneId::Fields => {
-                let mut storage = ParticleStorage::new(50);
-                storage.spawn(
-                    Vec3::ZERO,
+                self.viewport_scale = 22.0;
+                let cloth = build_cloth_grid(
+                    6,
+                    6,
+                    0.2,
                     Vec3 {
-                        x: 2.0,
-                        y: 0.0,
+                        x: -0.5,
+                        y: 0.5,
                         z: 0.0,
                     },
-                    10.0,
-                    ParticleType::Generic,
+                    Vec3 {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 1.0,
+                    },
+                    Vec3::X,
+                    true,
+                    3.0,
+                    0.1,
+                    1.0,
+                    0.01,
                 );
-                self.particle_storage = Some(storage);
-                self.world = ActiveWorld::Mixed;
+                self.world = ActiveWorld::SoftBody(Box::new(cloth));
             }
             SceneId::Vehicle => {
+                self.viewport_scale = 18.0;
                 let mut w = World3::default();
                 w.set_gravity(self.gravity3).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder3::static_body()
+                    BodyBuilder3::static_body()
                         .position(Vec3 {
                             x: 0.0,
-                            y: -0.5,
+                            y: -1.0,
                             z: 0.0,
                         })
                         .add_collider(Collider3 {
                             shape: ColliderShape3::Box(
                                 Box3::new(Vec3 {
-                                    x: 100.0,
-                                    y: 0.5,
-                                    z: 100.0,
+                                    x: 50.0,
+                                    y: 1.0,
+                                    z: 50.0,
                                 })
                                 .unwrap(),
                             ),
                             offset: Vec3::ZERO,
-                            material: Material::default(),
+                            material: Material {
+                                friction: 0.9,
+                                restitution: 0.0,
+                                density: 1.0,
+                            },
                             filter: CollisionFilter::default(),
                         }),
                 )
                 .ok();
-                let wheels = vec![WheelConfig3::default(); 4];
-                let mut vehicle = Vehicle3::new(
+                let mut veh = Vehicle3::new(
                     VehicleConfig3::default(),
                     Vec3 {
                         x: 0.0,
-                        y: 1.0,
+                        y: 2.0,
                         z: 0.0,
                     },
                     Quat::identity(),
-                    wheels,
+                    vec![
+                        WheelConfig3 {
+                            attachment_point: Vec3 {
+                                x: -0.9,
+                                y: -0.2,
+                                z: 1.4,
+                            },
+                            steered: true,
+                            ..Default::default()
+                        },
+                        WheelConfig3 {
+                            attachment_point: Vec3 {
+                                x: 0.9,
+                                y: -0.2,
+                                z: 1.4,
+                            },
+                            steered: true,
+                            ..Default::default()
+                        },
+                        WheelConfig3 {
+                            attachment_point: Vec3 {
+                                x: -0.9,
+                                y: -0.2,
+                                z: -1.4,
+                            },
+                            driven: true,
+                            ..Default::default()
+                        },
+                        WheelConfig3 {
+                            attachment_point: Vec3 {
+                                x: 0.9,
+                                y: -0.2,
+                                z: -1.4,
+                            },
+                            driven: true,
+                            ..Default::default()
+                        },
+                    ],
                     &mut w,
                 );
-                vehicle.set_controls(0.5, 0.0, 0.3);
-                self.vehicle3 = Some(vehicle);
+                veh.set_controls(0.5, 0.2, 0.0);
+                self.vehicle3 = Some(veh);
                 self.world = ActiveWorld::World3(Box::new(w));
             }
             SceneId::Char2d => {
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
                 w.set_gravity(self.gravity2).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder2::static_body()
+                    BodyBuilder2::static_body()
                         .position(Vec2 { x: 0.0, y: -0.5 })
                         .add_collider(Collider2 {
                             shape: ColliderShape2::Box(
-                                Box2::new(Vec2 { x: 100.0, y: 0.5 }).unwrap(),
+                                Box2::new(Vec2 { x: 20.0, y: 0.5 }).unwrap(),
                             ),
                             offset: Vec2::ZERO,
                             material: Material::default(),
@@ -592,28 +822,29 @@ impl SandboxApp {
                         }),
                 )
                 .ok();
-                let mut cc = Character2::new(CharacterConfig2::default(), Vec2 { x: 0.0, y: 2.0 });
+                let mut cc = Character2::new(CharacterConfig2::default(), Vec2 { x: -2.0, y: 2.0 });
                 cc.attach(&mut w);
-                cc.set_move(Vec2 { x: 0.5, y: 0.0 });
+                cc.set_move(Vec2 { x: 3.0, y: 0.0 });
                 self.character2 = Some(cc);
                 self.world = ActiveWorld::World2(Box::new(w));
             }
             SceneId::Char3d => {
+                self.viewport_scale = 18.0;
                 let mut w = World3::default();
                 w.set_gravity(self.gravity3).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder3::static_body()
+                    BodyBuilder3::static_body()
                         .position(Vec3 {
                             x: 0.0,
-                            y: -0.5,
+                            y: -1.0,
                             z: 0.0,
                         })
                         .add_collider(Collider3 {
                             shape: ColliderShape3::Box(
                                 Box3::new(Vec3 {
-                                    x: 100.0,
-                                    y: 0.5,
-                                    z: 100.0,
+                                    x: 20.0,
+                                    y: 1.0,
+                                    z: 20.0,
                                 })
                                 .unwrap(),
                             ),
@@ -627,25 +858,27 @@ impl SandboxApp {
                     CharacterConfig3::default(),
                     Vec3 {
                         x: 0.0,
-                        y: 2.0,
+                        y: 3.0,
                         z: 0.0,
                     },
                 );
                 cc.attach(&mut w);
                 cc.set_move(Vec3 {
-                    x: 0.5,
+                    x: 2.0,
                     y: 0.0,
-                    z: 0.5,
+                    z: 1.0,
                 });
                 self.character3 = Some(cc);
                 self.world = ActiveWorld::World3(Box::new(w));
             }
             SceneId::Serialization => {
-                // Simple world for serialization demo
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
+                w.set_gravity(self.gravity2).ok();
                 w.add_body(
-                    auralite_dynamics::BodyBuilder2::dynamic()
-                        .position(Vec2 { x: 0.0, y: 2.0 })
+                    BodyBuilder2::dynamic()
+                        .position(Vec2 { x: 0.0, y: 5.0 })
+                        .velocity(Vec2 { x: 1.0, y: -2.0 })
                         .add_collider(Collider2 {
                             shape: ColliderShape2::Circle(Circle2::new(0.5).unwrap()),
                             offset: Vec2::ZERO,
@@ -657,27 +890,32 @@ impl SandboxApp {
                 self.world = ActiveWorld::World2(Box::new(w));
             }
             SceneId::Stress => {
+                self.viewport_scale = 30.0;
                 let mut w = World2::default();
                 w.set_gravity(self.gravity2).ok();
-                w.solver_iterations = self.iterations as u16;
-                w.add_body(auralite_dynamics::BodyBuilder2::static_body().add_collider(
-                    Collider2 {
-                        shape: ColliderShape2::Box(Box2::new(Vec2 { x: 50.0, y: 0.5 }).unwrap()),
-                        offset: Vec2::ZERO,
-                        material: Material::default(),
-                        filter: CollisionFilter::default(),
-                    },
-                ))
+                w.add_body(
+                    BodyBuilder2::static_body()
+                        .position(Vec2 { x: 0.0, y: -0.5 })
+                        .add_collider(Collider2 {
+                            shape: ColliderShape2::Box(
+                                Box2::new(Vec2 { x: 25.0, y: 0.5 }).unwrap(),
+                            ),
+                            offset: Vec2::ZERO,
+                            material: Material::default(),
+                            filter: CollisionFilter::default(),
+                        }),
+                )
                 .ok();
                 for i in 0..100 {
-                    let x = (i as Real % 10.0 - 5.0) * 1.5;
-                    let y = (i as Real / 10.0).floor() * 1.5 + 2.0;
+                    let x = (i % 10) as Real * 0.6 - 3.0;
+                    let y = 1.0 + (i / 10) as Real * 0.6;
                     w.add_body(
-                        auralite_dynamics::BodyBuilder2::dynamic()
+                        BodyBuilder2::dynamic()
                             .position(Vec2 { x, y })
+                            .mass(0.5)
                             .add_collider(Collider2 {
                                 shape: ColliderShape2::Box(
-                                    Box2::new(Vec2 { x: 0.4, y: 0.4 }).unwrap(),
+                                    Box2::new(Vec2 { x: 0.25, y: 0.25 }).unwrap(),
                                 ),
                                 offset: Vec2::ZERO,
                                 material: Material::default(),
@@ -688,6 +926,64 @@ impl SandboxApp {
                 }
                 self.world = ActiveWorld::World2(Box::new(w));
             }
+            SceneId::Custom2d => {
+                self.viewport_scale = 30.0;
+                let mut w = World2::default();
+                w.set_gravity(self.gravity2).ok();
+                w.solver_iterations = self.iterations as u16;
+                // Static ground boundary so built bodies don't fall indefinitely
+                w.add_body(
+                    BodyBuilder2::static_body()
+                        .position(Vec2 { x: 0.0, y: -5.0 })
+                        .add_collider(Collider2 {
+                            shape: ColliderShape2::Box(
+                                Box2::new(Vec2 { x: 25.0, y: 1.0 }).unwrap(),
+                            ),
+                            offset: Vec2::ZERO,
+                            material: Material {
+                                friction: 0.6,
+                                restitution: 0.2,
+                                density: 1.0,
+                            },
+                            filter: CollisionFilter::default(),
+                        }),
+                )
+                .ok();
+                self.world = ActiveWorld::World2(Box::new(w));
+            }
+            SceneId::Custom3d => {
+                self.viewport_scale = 18.0;
+                let mut w = World3::default();
+                w.set_gravity(self.gravity3).ok();
+                w.solver_iterations = self.iterations as u16;
+                w.add_body(
+                    BodyBuilder3::static_body()
+                        .position(Vec3 {
+                            x: 0.0,
+                            y: -3.0,
+                            z: 0.0,
+                        })
+                        .add_collider(Collider3 {
+                            shape: ColliderShape3::Box(
+                                Box3::new(Vec3 {
+                                    x: 25.0,
+                                    y: 1.0,
+                                    z: 25.0,
+                                })
+                                .unwrap(),
+                            ),
+                            offset: Vec3::ZERO,
+                            material: Material {
+                                friction: 0.6,
+                                restitution: 0.2,
+                                density: 1.0,
+                            },
+                            filter: CollisionFilter::default(),
+                        }),
+                )
+                .ok();
+                self.world = ActiveWorld::World3(Box::new(w));
+            }
         }
         self.update_hash();
     }
@@ -697,7 +993,6 @@ impl SandboxApp {
             ActiveWorld::World2(w) => w.state_hash(),
             ActiveWorld::World3(w) => w.state_hash(),
             ActiveWorld::SoftBody(sb) => {
-                // hash of particle positions
                 let mut bytes = Vec::new();
                 for p in &sb.particles {
                     bytes.extend_from_slice(&p.position.x.to_bits().to_le_bytes());
@@ -746,7 +1041,6 @@ impl SandboxApp {
                     sb.post_step(dt);
                 }
                 ActiveWorld::Mixed => {
-                    // particle + fluid stepping
                     if let Some(storage) = &mut self.particle_storage
                         && let Some(fluid) = &mut self.fluid
                     {
@@ -761,20 +1055,17 @@ impl SandboxApp {
         }
         self.last_step_time_us = start.elapsed().as_micros() as f64;
         self.update_hash();
-        // Engine-driven record/replay (no mocks): recording appends the real
-        // `state_hash()` of each stepped frame; replay restores the record-start
-        // engine snapshot and verifies every re-stepped hash against the trace.
         if self.is_recording && !self.is_replaying {
             self.recorded_hashes.push(self.state_hash);
             if self.recorded_hashes.len() >= MAX_RECORD_FRAMES {
-                self.is_recording = false; // bounded capture reached
+                self.is_recording = false;
             }
         } else if self.is_replaying {
             match self.recorded_hashes.get(self.replay_index) {
                 Some(&expected) if expected == self.state_hash => {
                     self.replay_index += 1;
                     if self.replay_index >= self.recorded_hashes.len() {
-                        self.is_replaying = false; // replay complete — all frames verified
+                        self.is_replaying = false;
                     }
                 }
                 Some(&expected) => {
@@ -788,9 +1079,6 @@ impl SandboxApp {
         }
     }
 
-    /// Begin real engine recording: capture an engine snapshot of the active world
-    /// and clear the recorded hash trace. Each subsequent stepped frame appends its
-    /// real `state_hash()` to `recorded_hashes` (bounded by MAX_RECORD_FRAMES).
     pub fn start_recording(&mut self) {
         self.recorded_hashes.clear();
         self.replay_index = 0;
@@ -817,8 +1105,6 @@ impl SandboxApp {
         }
     }
 
-    /// Begin verified replay: restore the record-start engine snapshot and re-step;
-    /// `step()` compares each frame's hash against the recorded trace.
     pub fn start_replay(&mut self) {
         let restored = match &mut self.world {
             ActiveWorld::World2(w) => match &self.record_snapshot2 {
@@ -847,17 +1133,162 @@ impl SandboxApp {
         self.is_replaying = true;
         self.update_hash();
     }
-}
 
-impl eframe::App for SandboxApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Top panel
+    #[allow(clippy::unnecessary_cast)] // Real is f32 or f64 across feature builds
+    pub fn load_body_to_editor_fields(&mut self, id: u64) {
+        match &self.world {
+            ActiveWorld::World2(w) => {
+                if let Some((_, b)) = w.bodies_iter().find(|(_, b)| b.id.0 == id) {
+                    self.edit_pos_x = b.position.x as f32;
+                    self.edit_pos_y = b.position.y as f32;
+                    self.edit_pos_z = 0.0;
+                    self.edit_vel_x = b.velocity.x as f32;
+                    self.edit_vel_y = b.velocity.y as f32;
+                    self.edit_vel_z = 0.0;
+                    self.edit_ang_vel_x = 0.0;
+                    self.edit_ang_vel_y = 0.0;
+                    self.edit_ang_vel_z = b.angular_velocity as f32;
+                    self.edit_mass = if b.inv_mass > 0.0 {
+                        (1.0 / b.inv_mass) as f32
+                    } else {
+                        0.0
+                    };
+                    self.edit_lin_damp = b.linear_damping as f32;
+                    self.edit_ang_damp = b.angular_damping as f32;
+                    self.edit_friction = b.friction as f32;
+                    self.edit_restitution = b.restitution as f32;
+                }
+            }
+            ActiveWorld::World3(w) => {
+                if let Some((_, b)) = w.bodies_iter().find(|(_, b)| b.id.0 == id) {
+                    self.edit_pos_x = b.position.x as f32;
+                    self.edit_pos_y = b.position.y as f32;
+                    self.edit_pos_z = b.position.z as f32;
+                    self.edit_vel_x = b.velocity.x as f32;
+                    self.edit_vel_y = b.velocity.y as f32;
+                    self.edit_vel_z = b.velocity.z as f32;
+                    self.edit_ang_vel_x = b.angular_velocity.x as f32;
+                    self.edit_ang_vel_y = b.angular_velocity.y as f32;
+                    self.edit_ang_vel_z = b.angular_velocity.z as f32;
+                    self.edit_mass = if b.inv_mass > 0.0 {
+                        (1.0 / b.inv_mass) as f32
+                    } else {
+                        0.0
+                    };
+                    self.edit_lin_damp = b.linear_damping as f32;
+                    self.edit_ang_damp = b.angular_damping as f32;
+                    self.edit_friction = b.friction as f32;
+                    self.edit_restitution = b.restitution as f32;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[allow(clippy::unnecessary_cast)] // Real is f32 or f64 across feature builds
+    pub fn apply_editor_fields_to_body(&mut self, id: u64) {
+        match &mut self.world {
+            ActiveWorld::World2(w) => {
+                let handle = w.bodies_iter().find(|(_, b)| b.id.0 == id).map(|(h, _)| h);
+                if let Some(h) = handle
+                    && let Ok(bm) = w.body_mut(h)
+                {
+                    bm.position = Vec2 {
+                        x: self.edit_pos_x as Real,
+                        y: self.edit_pos_y as Real,
+                    };
+                    bm.velocity = Vec2 {
+                        x: self.edit_vel_x as Real,
+                        y: self.edit_vel_y as Real,
+                    };
+                    bm.angular_velocity = self.edit_ang_vel_z as Real;
+                    if self.edit_mass > 0.0 && bm.kind == BodyType::Dynamic {
+                        bm.inv_mass = (1.0 / self.edit_mass) as Real;
+                    }
+                    bm.linear_damping = self.edit_lin_damp as Real;
+                    bm.angular_damping = self.edit_ang_damp as Real;
+                    bm.friction = self.edit_friction as Real;
+                    bm.restitution = self.edit_restitution as Real;
+                    for c in &mut bm.colliders {
+                        c.material.friction = self.edit_friction as Real;
+                        c.material.restitution = self.edit_restitution as Real;
+                    }
+                    bm.sleeping = false;
+                }
+            }
+            ActiveWorld::World3(w) => {
+                let handle = w.bodies_iter().find(|(_, b)| b.id.0 == id).map(|(h, _)| h);
+                if let Some(h) = handle
+                    && let Ok(bm) = w.body_mut(h)
+                {
+                    bm.position = Vec3 {
+                        x: self.edit_pos_x as Real,
+                        y: self.edit_pos_y as Real,
+                        z: self.edit_pos_z as Real,
+                    };
+                    bm.velocity = Vec3 {
+                        x: self.edit_vel_x as Real,
+                        y: self.edit_vel_y as Real,
+                        z: self.edit_vel_z as Real,
+                    };
+                    bm.angular_velocity = Vec3 {
+                        x: self.edit_ang_vel_x as Real,
+                        y: self.edit_ang_vel_y as Real,
+                        z: self.edit_ang_vel_z as Real,
+                    };
+                    if self.edit_mass > 0.0 && bm.kind == BodyType::Dynamic {
+                        bm.inv_mass = (1.0 / self.edit_mass) as Real;
+                    }
+                    bm.linear_damping = self.edit_lin_damp as Real;
+                    bm.angular_damping = self.edit_ang_damp as Real;
+                    bm.friction = self.edit_friction as Real;
+                    bm.restitution = self.edit_restitution as Real;
+                    for c in &mut bm.colliders {
+                        c.material.friction = self.edit_friction as Real;
+                        c.material.restitution = self.edit_restitution as Real;
+                    }
+                    bm.sleeping = false;
+                }
+            }
+            _ => {}
+        }
+        self.update_hash();
+    }
+
+    fn hex_encode(data: &[u8]) -> String {
+        let mut s = String::with_capacity(data.len() * 2);
+        for byte in data {
+            use std::fmt::Write;
+            let _ = write!(&mut s, "{:02x}", byte);
+        }
+        s
+    }
+
+    fn hex_decode(s: &str) -> Option<Vec<u8>> {
+        let s = s.trim();
+        if !s.len().is_multiple_of(2) {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(s.len() / 2);
+        let chars: Vec<char> = s.chars().collect();
+        for i in (0..chars.len()).step_by(2) {
+            let hi = chars[i].to_digit(16)?;
+            let lo = chars[i + 1].to_digit(16)?;
+            bytes.push(((hi << 4) | lo) as u8);
+        }
+        Some(bytes)
+    }
+
+    fn render_top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.show_inspection, "🔍 Inspection");
-                ui.checkbox(&mut self.show_settings, "⚙ Settings");
+                ui.selectable_value(&mut self.show_tools, true, "🛠 Tool Studio");
+                ui.selectable_value(&mut self.show_outliner, true, "🗂 Outliner");
+                ui.selectable_value(&mut self.show_inspection, true, "🔍 Live Inspector");
+                ui.selectable_value(&mut self.show_settings, true, "⚙ Runtime Settings");
+                ui.selectable_value(&mut self.show_serialization, true, "💾 Save & Load Scene");
                 ui.separator();
-                ui.heading("⚡ AuraLite Physics Engine — Interactive Sandbox Studio (Real Engine)");
+                ui.heading("⚡ AuraLite Physics Engine — Full Scene Editor & Sandbox Studio");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(format!("Hash: {:016x}", self.state_hash))
@@ -871,12 +1302,13 @@ impl eframe::App for SandboxApp {
                 });
             });
         });
+    }
 
-        // Left panel - controls
-        egui::SidePanel::left("left").default_width(340.0).show(ctx, |ui| {
+    fn render_left_side_panel(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("left").default_width(350.0).show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.collapsing("Scene Browser (16 subsystems)", |ui| {
-                    ui.label("Select subsystem scene:");
+                ui.collapsing("📂 Scene Browser (18 Subsystems & Workspaces)", |ui| {
+                    ui.label("Select subsystem scene or empty workspace:");
                     let mut new_scene = self.scene;
                     for sid in SceneId::all() {
                         if ui
@@ -892,7 +1324,145 @@ impl eframe::App for SandboxApp {
                     }
                 });
 
-                ui.collapsing("Time & Simulation Controls", |ui| {
+                if self.show_tools {
+                    ui.collapsing("🛠 Interactive Tool Studio & Gizmo Modes", |ui| {
+                        ui.label(egui::RichText::new("Active Editor Tool:").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            for tool in [
+                                EditorTool::Select,
+                                EditorTool::SpawnBody,
+                                EditorTool::CreateJoint,
+                                EditorTool::ApplyImpulse,
+                                EditorTool::Delete,
+                            ] {
+                                ui.selectable_value(&mut self.active_tool, tool, tool.as_str());
+                            }
+                        });
+                        ui.separator();
+
+                        match self.active_tool {
+                            EditorTool::Select => {
+                                ui.label("👆 Click on any body or joint in the viewport to inspect and live-edit its properties.");
+                                ui.label("💡 Tip: When paused, drag selected bodies across the viewport to reposition them precisely!");
+                            }
+                            EditorTool::SpawnBody => {
+                                ui.label(egui::RichText::new("➕ Spawn Body Configuration:").strong());
+                                ui.horizontal(|ui| {
+                                    ui.label("Shape:");
+                                    ui.radio_value(&mut self.spawn_shape, 0, "Circle/Sphere");
+                                    ui.radio_value(&mut self.spawn_shape, 1, "Box");
+                                    ui.radio_value(&mut self.spawn_shape, 2, "Capsule");
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Type:");
+                                    ui.radio_value(&mut self.spawn_body_type, 0, "Dynamic");
+                                    ui.radio_value(&mut self.spawn_body_type, 1, "Static");
+                                    ui.radio_value(&mut self.spawn_body_type, 2, "Kinematic");
+                                });
+                                if self.spawn_shape == 0 {
+                                    ui.add(egui::Slider::new(&mut self.spawn_radius, 0.1..=5.0).text("Radius (m)"));
+                                } else if self.spawn_shape == 1 {
+                                    ui.add(egui::Slider::new(&mut self.spawn_half_width, 0.1..=10.0).text("Half Width X"));
+                                    ui.add(egui::Slider::new(&mut self.spawn_half_height, 0.1..=10.0).text("Half Height Y"));
+                                    if self.scene.is_3d() {
+                                        ui.add(egui::Slider::new(&mut self.spawn_half_depth, 0.1..=10.0).text("Half Depth Z"));
+                                    }
+                                } else {
+                                    ui.add(egui::Slider::new(&mut self.spawn_radius, 0.1..=3.0).text("Radius (m)"));
+                                    ui.add(egui::Slider::new(&mut self.spawn_half_height, 0.1..=5.0).text("Half Height (m)"));
+                                }
+                                if self.spawn_body_type == 0 {
+                                    ui.add(egui::Slider::new(&mut self.spawn_mass, 0.1..=100.0).text("Mass (kg)"));
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::DragValue::new(&mut self.spawn_friction).range(0.0..=1.0).prefix("Friction: "));
+                                    ui.add(egui::DragValue::new(&mut self.spawn_restitution).range(0.0..=1.0).prefix("Restitution: "));
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::DragValue::new(&mut self.spawn_lin_damp).range(0.0..=10.0).prefix("Lin Damp: "));
+                                    ui.add(egui::DragValue::new(&mut self.spawn_ang_damp).range(0.0..=10.0).prefix("Ang Damp: "));
+                                });
+                                ui.label("Initial Velocity:");
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::DragValue::new(&mut self.spawn_vel_x).prefix("vx: "));
+                                    ui.add(egui::DragValue::new(&mut self.spawn_vel_y).prefix("vy: "));
+                                    if self.scene.is_3d() {
+                                        ui.add(egui::DragValue::new(&mut self.spawn_vel_z).prefix("vz: "));
+                                    }
+                                });
+                                ui.colored_label(egui::Color32::from_rgb(100, 255, 180), "✨ Click anywhere on the viewport to spawn this body immediately!");
+                            }
+                            EditorTool::CreateJoint => {
+                                ui.label(egui::RichText::new("🔗 Step-by-Step Joint Creation Wizard:").strong());
+                                if self.joint_wizard_step == 0 {
+                                    ui.colored_label(egui::Color32::YELLOW, "Step 1: Click Body A on the viewport.");
+                                    if let Some(id_a) = self.joint_wizard_body_a {
+                                        ui.label(format!("Selected Body A: ID {}", id_a));
+                                        if ui.button("Next Step ➡").clicked() {
+                                            self.joint_wizard_step = 1;
+                                        }
+                                    }
+                                } else {
+                                    ui.colored_label(egui::Color32::YELLOW, "Step 2: Click Body B on the viewport.");
+                                    if let (Some(id_a), Some(id_b)) = (self.joint_wizard_body_a, self.joint_wizard_body_b) {
+                                        ui.label(format!("Wiring Body A (ID {}) to Body B (ID {})", id_a, id_b));
+                                        if !self.scene.is_3d() {
+                                            ui.label("2D Joint Type:");
+                                            ui.radio_value(&mut self.joint_wizard_type2, 0, "Revolute (Hinge)");
+                                            ui.radio_value(&mut self.joint_wizard_type2, 1, "Distance");
+                                            ui.radio_value(&mut self.joint_wizard_type2, 2, "Spring");
+                                            ui.radio_value(&mut self.joint_wizard_type2, 3, "Weld");
+                                            ui.radio_value(&mut self.joint_wizard_type2, 4, "Prismatic (Slider)");
+                                        } else {
+                                            ui.label("3D Joint Type:");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 0, "Ball-and-Socket");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 1, "Distance");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 2, "Spring");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 3, "Weld");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 4, "Hinge");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 5, "Slider");
+                                            ui.radio_value(&mut self.joint_wizard_type3, 6, "Cone-Twist (DoD-H5)");
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.label("Anchor A:");
+                                            ui.add(egui::DragValue::new(&mut self.joint_wizard_anchor_a_x).prefix("x: "));
+                                            ui.add(egui::DragValue::new(&mut self.joint_wizard_anchor_a_y).prefix("y: "));
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label("Anchor B:");
+                                            ui.add(egui::DragValue::new(&mut self.joint_wizard_anchor_b_x).prefix("x: "));
+                                            ui.add(egui::DragValue::new(&mut self.joint_wizard_anchor_b_y).prefix("y: "));
+                                        });
+                                        if self.joint_wizard_type2 == 2 || self.joint_wizard_type3 == 2 {
+                                            ui.add(egui::Slider::new(&mut self.joint_wizard_stiffness, 1.0..=500.0).text("Stiffness"));
+                                            ui.add(egui::Slider::new(&mut self.joint_wizard_damping, 0.1..=50.0).text("Damping"));
+                                        }
+                                        ui.add(egui::DragValue::new(&mut self.joint_wizard_break_impulse).prefix("Break Impulse (0=Inf): "));
+                                        if ui.button("⚡ Create Connected Joint Now!").clicked() {
+                                            self.execute_create_joint();
+                                        }
+                                    }
+                                    if ui.button("⬅ Reset Wizard").clicked() {
+                                        self.joint_wizard_step = 0;
+                                        self.joint_wizard_body_a = None;
+                                        self.joint_wizard_body_b = None;
+                                    }
+                                }
+                            }
+                            EditorTool::ApplyImpulse => {
+                                ui.label("💨 Force / Impulse Puller:");
+                                ui.label("Click and hold on any body, then pull/drag across the viewport to stretch an impulse vector arrow. Release mouse button to launch!");
+                                ui.add(egui::Slider::new(&mut self.impulse_multiplier, 0.5..=25.0).text("Impulse Strength"));
+                            }
+                            EditorTool::Delete => {
+                                ui.label("🗑 Delete Mode:");
+                                ui.colored_label(egui::Color32::LIGHT_RED, "Click any body or joint on the viewport to instantly remove it from the active simulation!");
+                            }
+                        }
+                    });
+                }
+
+                ui.collapsing("⏱ Time & Simulation Controls", |ui| {
                     ui.horizontal(|ui| {
                         if ui
                             .button(if self.paused { "▶ Resume" } else { "⏸ Pause" })
@@ -914,10 +1484,11 @@ impl eframe::App for SandboxApp {
                             .suffix("x"),
                     );
                     ui.add(egui::Slider::new(&mut self.dt, 0.001..=0.033).text("dt (s)"));
-                    ui.add(egui::Slider::new(&mut self.substeps, 1..=8).text("Substeps"));
+                    ui.add(egui::Slider::new(&mut self.substeps, 1..=16).text("Substeps"));
                 });
 
-                ui.collapsing("Debug-Draw Toggles", |ui| {
+                ui.collapsing("🎨 Debug-Draw Toggles", |ui| {
+                    ui.checkbox(&mut self.debug.grid, "Coordinate Grid & Ground Line");
                     ui.checkbox(&mut self.debug.aabbs, "AABBs (Bounding Boxes)");
                     ui.checkbox(&mut self.debug.contacts, "Contacts");
                     ui.checkbox(&mut self.debug.normals, "Contact Normals");
@@ -931,54 +1502,30 @@ impl eframe::App for SandboxApp {
                 });
 
                 if self.show_settings {
-                    ui.collapsing("Editable Runtime Settings", |ui| {
-                    ui.label("Gravity (2D):");
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.gravity2.x).prefix("x: "));
-                        ui.add(egui::DragValue::new(&mut self.gravity2.y).prefix("y: "));
-                    });
-                    ui.label("Gravity (3D):");
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut self.gravity3.x).prefix("x: "));
-                        ui.add(egui::DragValue::new(&mut self.gravity3.y).prefix("y: "));
-                        ui.add(egui::DragValue::new(&mut self.gravity3.z).prefix("z: "));
-                    });
-                    ui.add(
-                        egui::Slider::new(&mut self.iterations, 1..=50).text("Solver Iterations"),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.label("Material edit (selected):");
+                    ui.collapsing("⚙ Editable Runtime Settings", |ui| {
+                        ui.label("Gravity (2D):");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut self.gravity2.x).prefix("x: "));
+                            ui.add(egui::DragValue::new(&mut self.gravity2.y).prefix("y: "));
+                        });
+                        ui.label("Gravity (3D):");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut self.gravity3.x).prefix("x: "));
+                            ui.add(egui::DragValue::new(&mut self.gravity3.y).prefix("y: "));
+                            ui.add(egui::DragValue::new(&mut self.gravity3.z).prefix("z: "));
+                        });
                         ui.add(
-                            egui::DragValue::new(&mut self.edit_friction)
-                                .range(0.0..=1.0)
-                                .prefix("friction: "),
+                            egui::Slider::new(&mut self.iterations, 1..=50).text("Solver Iterations"),
                         );
-                        ui.add(
-                            egui::DragValue::new(&mut self.edit_restitution)
-                                .range(0.0..=1.0)
-                                .prefix("restitution: "),
-                        );
-                    });
-                    if ui.button("Apply to selected body").clicked()
-                        && let ActiveWorld::World2(w) = &mut self.world
-                            && let Some(sid) = self.selected_body {
-                                let handles = w.body_handles();
-                                for h in handles {
-                                    if let Ok(bb) = w.body(h)
-                                        && bb.id.0 == sid {
-                                            if let Ok(bm) = w.body_mut(h) {
-                                                bm.friction = self.edit_friction as Real;
-                                                bm.restitution =
-                                                    self.edit_restitution as Real;
-                                            }
-                                            break;
-                                        }
-                                }
-                            }
+                        ui.add(egui::Slider::new(&mut self.viewport_scale, 5.0..=150.0).text("Viewport Scale"));
+                        if self.scene.is_3d() {
+                            ui.add(egui::Slider::new(&mut self.camera_yaw, -(std::f32::consts::PI)..=std::f32::consts::PI).text("Camera Yaw"));
+                            ui.add(egui::Slider::new(&mut self.camera_pitch, -1.5..=1.5).text("Camera Pitch"));
+                        }
                     });
                 }
 
-                ui.collapsing("Determinism Controls (Real Engine)", |ui| {
+                ui.collapsing("🛑 Determinism & Replay Verification", |ui| {
                     ui.label(
                         egui::RichText::new(format!("Real state hash: {:016x}", self.state_hash))
                             .monospace()
@@ -1023,8 +1570,6 @@ impl eframe::App for SandboxApp {
                             }
                         }
                     });
-                    // Real record/replay: engine snapshot + per-frame state-hash trace,
-                    // verified by re-stepping from the snapshot (no mock counters).
                     let recordable = matches!(
                         self.world,
                         ActiveWorld::World2(_) | ActiveWorld::World3(_) | ActiveWorld::SoftBody(_)
@@ -1032,7 +1577,7 @@ impl eframe::App for SandboxApp {
                     if recordable {
                         ui.horizontal(|ui| {
                             let mut rec = self.is_recording;
-                            if ui.checkbox(&mut rec, "🔴 Record").changed() {
+                            if ui.checkbox(&mut rec, "🔴 Record Trace").changed() {
                                 if rec {
                                     self.start_recording();
                                 } else {
@@ -1073,104 +1618,13 @@ impl eframe::App for SandboxApp {
                                 ),
                             );
                         }
-                    } else {
-                        ui.label(
-                            "Record/Replay available on rigid-body (2D/3D) and soft-body scenes \
-                             (engine snapshot API); particle-only scenes are excluded honestly.",
-                        );
                     }
                 });
 
-                if self.show_inspection {
-                    ui.collapsing("Body / Constraint Inspection", |ui| {
-                    match &self.world {
-                        ActiveWorld::World2(w) => {
-                            ui.label(format!("Bodies: {} | Joints: {}", w.body_count(), w.joints.len()));
-                            egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                                for (h, b) in w.bodies_iter() {
-                                    let label = format!(
-                                        "ID {}: pos=({:.2},{:.2}) v=({:.2},{:.2}) sleep={} kind={:?}",
-                                        b.id.0, b.position.x, b.position.y, b.velocity.x, b.velocity.y, b.sleeping, b.kind
-                                    );
-                                    let selected = self.selected_body == Some(b.id.0);
-                                    if ui.selectable_label(selected, label).clicked() {
-                                        self.selected_body = Some(b.id.0);
-                                        let _ = h;
-                                    }
-                                }
-                            });
-                            if let Some(sid) = self.selected_body {
-                                ui.separator();
-                                ui.label(format!("Selected body ID {}", sid));
-                                if let Some((_, b)) = w.bodies_iter().find(|(_, b)| b.id.0 == sid) {
-                                    ui.label(format!("Pos: {:.3},{:.3}", b.position.x, b.position.y));
-                                    ui.label(format!("Vel: {:.3},{:.3}", b.velocity.x, b.velocity.y));
-                                    ui.label(format!("AngVel: {:.3}", b.angular_velocity));
-                                    ui.label(format!("Sleeping: {}", b.sleeping));
-                                    ui.label(format!("Colliders: {}", b.colliders.len()));
-                                }
-                            }
-                            ui.separator();
-                            ui.label("Joints:");
-                            for j in &w.joints {
-                                ui.label(format!(
-                                    "Joint {:?} ID {} broken={} imp={:.2}",
-                                    j.config.joint_type, j.id.0, j.broken, j.impulse
-                                ));
-                            }
-                            ui.label(format!("Sensor events: {}", w.sensor_events.len()));
-                            for ev in w.sensor_events.iter().take(5) {
-                                ui.label(format!("Sensor {} other {} began {}", ev.sensor, ev.other, ev.began));
-                            }
-                        }
-                        ActiveWorld::World3(w) => {
-                            ui.label(format!("Bodies: {} | Joints: {}", w.body_count(), w.joints.len()));
-                            egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                                for (_, b) in w.bodies_iter() {
-                                    let selected = self.selected_body == Some(b.id.0);
-                                    if ui
-                                        .selectable_label(
-                                            selected,
-                                            format!(
-                                                "ID {} pos=({:.1},{:.1},{:.1}) sleep={}",
-                                                b.id.0, b.position.x, b.position.y, b.position.z, b.sleeping
-                                            ),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.selected_body = Some(b.id.0);
-                                    }
-                                }
-                            });
-                            if let Some(sid) = self.selected_body
-                                && let Some((_, b)) = w.bodies_iter().find(|(_, b)| b.id.0 == sid) {
-                                    ui.label(format!(
-                                        "Pos: {:.2},{:.2},{:.2}",
-                                        b.position.x, b.position.y, b.position.z
-                                    ));
-                                    ui.label(format!(
-                                        "Vel: {:.2},{:.2},{:.2}",
-                                        b.velocity.x, b.velocity.y, b.velocity.z
-                                    ));
-                                }
-                        }
-                        ActiveWorld::SoftBody(sb) => {
-                            ui.label(format!("SoftBody particles: {}", sb.particles.len()));
-                            ui.label(format!("KE: {:.3}", sb.kinetic_energy()));
-                        }
-                        ActiveWorld::Mixed => {
-                            if let Some(storage) = &self.particle_storage {
-                                ui.label(format!("Particles alive: {}", storage.alive_count()));
-                            }
-                        }
-                    }
-                    });
-                }
-
-                ui.collapsing("Profiling Overlay (Real Timing)", |ui| {
+                ui.collapsing("📊 Profiling Overlay (Real Timing)", |ui| {
                     ui.label(format!("Last step: {:.1} µs", self.last_step_time_us));
                     ui.label(format!("Broad-phase est: {:.1} µs", self.last_broad_time_us));
-                    ui.label(format!("Bodies: {}", match &self.world {
+                    ui.label(format!("Total Bodies: {}", match &self.world {
                         ActiveWorld::World2(w) => w.body_count(),
                         ActiveWorld::World3(w) => w.body_count(),
                         _ => 0,
@@ -1178,33 +1632,426 @@ impl eframe::App for SandboxApp {
                 });
             });
         });
+    }
 
-        // Central panel - 2D/3D view (engine-driven)
+    fn execute_create_joint(&mut self) {
+        if let (Some(id_a), Some(id_b)) = (self.joint_wizard_body_a, self.joint_wizard_body_b) {
+            match &mut self.world {
+                ActiveWorld::World2(w) => {
+                    let ha = w
+                        .bodies_iter()
+                        .find(|(_, b)| b.id.0 == id_a)
+                        .map(|(h, _)| h);
+                    let hb = w
+                        .bodies_iter()
+                        .find(|(_, b)| b.id.0 == id_b)
+                        .map(|(h, _)| h);
+                    if let (Some(ha), Some(hb)) = (ha, hb) {
+                        let jtype = match self.joint_wizard_type2 {
+                            1 => JointType2::Distance,
+                            2 => JointType2::Spring {
+                                stiffness: self.joint_wizard_stiffness as Real,
+                                damping: self.joint_wizard_damping as Real,
+                            },
+                            3 => JointType2::Weld,
+                            4 => JointType2::Prismatic {
+                                axis_local: Vec2::X,
+                            },
+                            _ => JointType2::Revolute,
+                        };
+                        let mut cfg = JointConfig2::new(
+                            jtype,
+                            ha,
+                            hb,
+                            Vec2 {
+                                x: self.joint_wizard_anchor_a_x as Real,
+                                y: self.joint_wizard_anchor_a_y as Real,
+                            },
+                            Vec2 {
+                                x: self.joint_wizard_anchor_b_x as Real,
+                                y: self.joint_wizard_anchor_b_y as Real,
+                            },
+                        );
+                        cfg.break_impulse = self.joint_wizard_break_impulse as Real;
+                        w.add_joint(cfg).ok();
+                    }
+                }
+                ActiveWorld::World3(w) => {
+                    let ha = w
+                        .bodies_iter()
+                        .find(|(_, b)| b.id.0 == id_a)
+                        .map(|(h, _)| h);
+                    let hb = w
+                        .bodies_iter()
+                        .find(|(_, b)| b.id.0 == id_b)
+                        .map(|(h, _)| h);
+                    if let (Some(ha), Some(hb)) = (ha, hb) {
+                        let jtype = match self.joint_wizard_type3 {
+                            1 => JointType3::Distance,
+                            2 => JointType3::Spring {
+                                stiffness: self.joint_wizard_stiffness as Real,
+                                damping: self.joint_wizard_damping as Real,
+                            },
+                            3 => JointType3::Weld,
+                            4 => JointType3::Hinge {
+                                axis_local: Vec3::Z,
+                            },
+                            5 => JointType3::Slider {
+                                axis_local: Vec3::X,
+                            },
+                            6 => JointType3::ConeTwist {
+                                axis_local: Vec3::Y,
+                                swing_limit: 0.5,
+                                twist_limit: 0.5,
+                            },
+                            _ => JointType3::BallSocket,
+                        };
+                        let mut cfg = JointConfig3::new(
+                            jtype,
+                            ha,
+                            hb,
+                            Vec3 {
+                                x: self.joint_wizard_anchor_a_x as Real,
+                                y: self.joint_wizard_anchor_a_y as Real,
+                                z: self.joint_wizard_anchor_a_z as Real,
+                            },
+                            Vec3 {
+                                x: self.joint_wizard_anchor_b_x as Real,
+                                y: self.joint_wizard_anchor_b_y as Real,
+                                z: self.joint_wizard_anchor_b_z as Real,
+                            },
+                        );
+                        cfg.break_impulse = self.joint_wizard_break_impulse as Real;
+                        w.add_joint(cfg).ok();
+                    }
+                }
+                _ => {}
+            }
+            self.joint_wizard_step = 0;
+            self.joint_wizard_body_a = None;
+            self.joint_wizard_body_b = None;
+            self.update_hash();
+        }
+    }
+
+    fn render_right_side_panel(&mut self, ctx: &egui::Context) {
+        if !self.show_inspection && !self.show_outliner {
+            return;
+        }
+        egui::SidePanel::right("right").default_width(360.0).show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                if self.show_outliner {
+                    ui.collapsing("🗂 Scene Hierarchy & Outliner", |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Filter:");
+                            ui.text_edit_singleline(&mut self.outliner_search);
+                        });
+                        ui.separator();
+                        let mut body_to_load = None;
+                        match &self.world {
+                            ActiveWorld::World2(w) => {
+                                ui.label(egui::RichText::new(format!("Total Bodies: {} | Joints: {}", w.body_count(), w.joints.len())).strong());
+                                let mut clicked_body = None;
+                                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                    for (_, b) in w.bodies_iter() {
+                                        let summary = format!(
+                                            "Body {} [{:?}] at ({:.1}, {:.1})",
+                                            b.id.0, b.kind, b.position.x, b.position.y
+                                        );
+                                        if !self.outliner_search.is_empty() && !summary.to_lowercase().contains(&self.outliner_search.to_lowercase()) {
+                                            continue;
+                                        }
+                                        let selected = self.selected_body == Some(b.id.0);
+                                        if ui.selectable_label(selected, summary).clicked() {
+                                            self.selected_body = Some(b.id.0);
+                                            clicked_body = Some(b.id.0);
+                                        }
+                                    }
+                                });
+                                body_to_load = clicked_body;
+                                ui.separator();
+                                ui.label(egui::RichText::new("Joints List:").strong());
+                                for j in &w.joints {
+                                    let jsum = format!("Joint {} [{:?}] broken={}", j.id.0, j.config.joint_type, j.broken);
+                                    let jsel = self.selected_joint == Some(j.id);
+                                    if ui.selectable_label(jsel, jsum).clicked() {
+                                        self.selected_joint = Some(j.id);
+                                    }
+                                }
+                            }
+                            ActiveWorld::World3(w) => {
+                                ui.label(egui::RichText::new(format!("Total Bodies: {} | Joints: {}", w.body_count(), w.joints.len())).strong());
+                                let mut clicked_body = None;
+                                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                    for (_, b) in w.bodies_iter() {
+                                        let summary = format!(
+                                            "Body {} [{:?}] at ({:.1}, {:.1}, {:.1})",
+                                            b.id.0, b.kind, b.position.x, b.position.y, b.position.z
+                                        );
+                                        if !self.outliner_search.is_empty() && !summary.to_lowercase().contains(&self.outliner_search.to_lowercase()) {
+                                            continue;
+                                        }
+                                        let selected = self.selected_body == Some(b.id.0);
+                                        if ui.selectable_label(selected, summary).clicked() {
+                                            self.selected_body = Some(b.id.0);
+                                            clicked_body = Some(b.id.0);
+                                        }
+                                    }
+                                });
+                                body_to_load = clicked_body;
+                                ui.separator();
+                                ui.label(egui::RichText::new("Joints List:").strong());
+                                for j in &w.joints {
+                                    let jsum = format!("Joint {} [{:?}] broken={}", j.id.0, j.config.joint_type, j.broken);
+                                    let jsel = self.selected_joint == Some(j.id);
+                                    if ui.selectable_label(jsel, jsum).clicked() {
+                                        self.selected_joint = Some(j.id);
+                                    }
+                                }
+                            }
+                            ActiveWorld::SoftBody(sb) => {
+                                ui.label(format!("XPBD SoftBody: {} particles, {} edge constraints", sb.particles.len(), sb.edge_indices.len()));
+                            }
+                            ActiveWorld::Mixed => {
+                                if let Some(st) = &self.particle_storage {
+                                    ui.label(format!("Particle/Fluid Storage: {} alive", st.alive_count()));
+                                }
+                            }
+                        }
+                        if let Some(id) = body_to_load {
+                            self.load_body_to_editor_fields(id);
+                        }
+                    });
+                }
+
+                if self.show_inspection {
+                    ui.collapsing("🔍 Live Property Inspector & Modifier", |ui| {
+                        if let Some(sid) = self.selected_body {
+                            ui.label(egui::RichText::new(format!("Editing Selected Body ID: {}", sid)).strong().color(egui::Color32::YELLOW));
+                            let mut modified = false;
+                            ui.horizontal(|ui| {
+                                ui.label("Position:");
+                                if ui.add(egui::DragValue::new(&mut self.edit_pos_x).prefix("x: ").speed(0.1)).changed() { modified = true; }
+                                if ui.add(egui::DragValue::new(&mut self.edit_pos_y).prefix("y: ").speed(0.1)).changed() { modified = true; }
+                                if self.scene.is_3d() && ui.add(egui::DragValue::new(&mut self.edit_pos_z).prefix("z: ").speed(0.1)).changed() { modified = true; }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Velocity:");
+                                if ui.add(egui::DragValue::new(&mut self.edit_vel_x).prefix("vx: ").speed(0.1)).changed() { modified = true; }
+                                if ui.add(egui::DragValue::new(&mut self.edit_vel_y).prefix("vy: ").speed(0.1)).changed() { modified = true; }
+                                if self.scene.is_3d() && ui.add(egui::DragValue::new(&mut self.edit_vel_z).prefix("vz: ").speed(0.1)).changed() { modified = true; }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("AngVel ω:");
+                                if ui.add(egui::DragValue::new(&mut self.edit_ang_vel_z).prefix("wz: ").speed(0.1)).changed() { modified = true; }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Mass & Damping:");
+                                if ui.add(egui::DragValue::new(&mut self.edit_mass).range(0.0..=500.0).prefix("mass: ").speed(0.1)).changed() { modified = true; }
+                                if ui.add(egui::DragValue::new(&mut self.edit_lin_damp).range(0.0..=10.0).prefix("ld: ").speed(0.05)).changed() { modified = true; }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Material Properties:");
+                                if ui.add(egui::DragValue::new(&mut self.edit_friction).range(0.0..=1.0).prefix("fric: ").speed(0.02)).changed() { modified = true; }
+                                if ui.add(egui::DragValue::new(&mut self.edit_restitution).range(0.0..=1.0).prefix("rest: ").speed(0.02)).changed() { modified = true; }
+                            });
+
+                            if modified {
+                                self.apply_editor_fields_to_body(sid);
+                            }
+
+                            ui.horizontal(|ui| {
+                                if ui.button("⚡ Apply / Wake Body").clicked() {
+                                    self.apply_editor_fields_to_body(sid);
+                                }
+                                if ui.button("💥 Give Upward Impulse").clicked() {
+                                    match &mut self.world {
+                                        ActiveWorld::World2(w) => {
+                                            let handle = w.bodies_iter().find(|(_, b)| b.id.0 == sid).map(|(h, _)| h);
+                                            if let Some(h) = handle {
+                                                let _ = w.apply_impulse(h, Vec2 { x: 0.0, y: 5.0 });
+                                            }
+                                        }
+                                        ActiveWorld::World3(w) => {
+                                            let handle = w.bodies_iter().find(|(_, b)| b.id.0 == sid).map(|(h, _)| h);
+                                            if let Some(h) = handle {
+                                                let _ = w.apply_impulse(h, Vec3 { x: 0.0, y: 5.0, z: 0.0 });
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
+                            ui.separator();
+                            if ui.button("🗑 Delete Selected Body").clicked() {
+                                match &mut self.world {
+                                    ActiveWorld::World2(w) => {
+                                        let handle = w.bodies_iter().find(|(_, b)| b.id.0 == sid).map(|(h, _)| h);
+                                        if let Some(h) = handle {
+                                            let _ = w.remove_body(h);
+                                        }
+                                    }
+                                    ActiveWorld::World3(w) => {
+                                        let handle = w.bodies_iter().find(|(_, b)| b.id.0 == sid).map(|(h, _)| h);
+                                        if let Some(h) = handle {
+                                            let _ = w.remove_body(h);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                self.selected_body = None;
+                                self.update_hash();
+                            }
+                        } else if let Some(jid) = self.selected_joint {
+                            ui.label(egui::RichText::new(format!("Inspecting Selected Joint ID: {}", jid.0)).strong().color(egui::Color32::from_rgb(255, 180, 50)));
+                            if ui.button("🗑 Delete Selected Joint").clicked() {
+                                match &mut self.world {
+                                    ActiveWorld::World2(w) => w.remove_joint(jid),
+                                    ActiveWorld::World3(w) => w.remove_joint(jid),
+                                    _ => {}
+                                }
+                                self.selected_joint = None;
+                                self.update_hash();
+                            }
+                        } else {
+                            ui.label("No body or joint currently selected. Click on an object in the viewport or outliner to inspect and modify it.");
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    fn render_bottom_serialization_panel(&mut self, ctx: &egui::Context) {
+        if !self.show_serialization {
+            return;
+        }
+        egui::TopBottomPanel::bottom("bottom_serialization").resizable(true).default_height(160.0).show(ctx, |ui| {
+            ui.heading("💾 Scene Serialization, Save & Load Studio");
+            ui.horizontal(|ui| {
+                if ui.button("📤 Export Active World to Hex String").clicked() {
+                    match &self.world {
+                        ActiveWorld::World2(w) => {
+                            self.serialization_buffer = Self::hex_encode(&auralite_serialize::serialize_world2(w));
+                            self.serialization_status = "Exported 2D World successfully!".to_string();
+                        }
+                        ActiveWorld::World3(w) => {
+                            self.serialization_buffer = Self::hex_encode(&auralite_serialize::serialize_world3(w));
+                            self.serialization_status = "Exported 3D World successfully!".to_string();
+                        }
+                        ActiveWorld::SoftBody(sb) => {
+                            self.serialization_buffer = Self::hex_encode(&auralite_serialize::serialize_soft_body(sb));
+                            self.serialization_status = "Exported SoftBody World successfully!".to_string();
+                        }
+                        ActiveWorld::Mixed => {
+                            self.serialization_status = "Particle/Fluid scenes use specialized engine arrays.".to_string();
+                        }
+                    }
+                }
+                if ui.button("📥 Import & Replace World from Hex Buffer").clicked() {
+                    if let Some(bytes) = Self::hex_decode(&self.serialization_buffer) {
+                        if let Ok(w) = auralite_serialize::deserialize_world2(&bytes) {
+                            self.world = ActiveWorld::World2(Box::new(w));
+                            self.update_hash();
+                            self.serialization_status = "Successfully loaded and verified 2D World!".to_string();
+                        } else if let Ok(w) = auralite_serialize::deserialize_world3(&bytes) {
+                            self.world = ActiveWorld::World3(Box::new(w));
+                            self.update_hash();
+                            self.serialization_status = "Successfully loaded and verified 3D World!".to_string();
+                        } else if let Ok(sb) = auralite_serialize::deserialize_soft_body(&bytes) {
+                            self.world = ActiveWorld::SoftBody(Box::new(sb));
+                            self.update_hash();
+                            self.serialization_status = "Successfully loaded SoftBody World!".to_string();
+                        } else {
+                            self.serialization_status = "❌ Failed to decode scene envelope (check format or checksum).".to_string();
+                        }
+                    } else {
+                        self.serialization_status = "❌ Hex string is invalid or malformed.".to_string();
+                    }
+                }
+                ui.separator();
+                ui.label("File Path:");
+                ui.text_edit_singleline(&mut self.save_file_path);
+                if ui.button("💾 Save to File").clicked() {
+                    if let Some(bytes) = Self::hex_decode(&self.serialization_buffer) {
+                        if std::fs::write(&self.save_file_path, &bytes).is_ok() {
+                            self.serialization_status = format!("Saved scene directly to {}", self.save_file_path);
+                        } else {
+                            self.serialization_status = "❌ File write failed.".to_string();
+                        }
+                    } else {
+                        // Export directly if buffer was empty
+                        let raw = match &self.world {
+                            ActiveWorld::World2(w) => Some(auralite_serialize::serialize_world2(w)),
+                            ActiveWorld::World3(w) => Some(auralite_serialize::serialize_world3(w)),
+                            ActiveWorld::SoftBody(sb) => Some(auralite_serialize::serialize_soft_body(sb)),
+                            ActiveWorld::Mixed => None,
+                        };
+                        if let Some(bytes) = raw {
+                            if std::fs::write(&self.save_file_path, &bytes).is_ok() {
+                                self.serialization_status = format!("Saved binary scene to {}", self.save_file_path);
+                            } else {
+                                self.serialization_status = "❌ File write failed.".to_string();
+                            }
+                        }
+                    }
+                }
+                if ui.button("📂 Load from File").clicked() {
+                    if let Ok(bytes) = std::fs::read(&self.save_file_path) {
+                        self.serialization_buffer = Self::hex_encode(&bytes);
+                        if let Ok(w) = auralite_serialize::deserialize_world2(&bytes) {
+                            self.world = ActiveWorld::World2(Box::new(w));
+                            self.update_hash();
+                            self.serialization_status = format!("Loaded 2D World from {}", self.save_file_path);
+                        } else if let Ok(w) = auralite_serialize::deserialize_world3(&bytes) {
+                            self.world = ActiveWorld::World3(Box::new(w));
+                            self.update_hash();
+                            self.serialization_status = format!("Loaded 3D World from {}", self.save_file_path);
+                        } else if let Ok(sb) = auralite_serialize::deserialize_soft_body(&bytes) {
+                            self.world = ActiveWorld::SoftBody(Box::new(sb));
+                            self.update_hash();
+                            self.serialization_status = format!("Loaded SoftBody from {}", self.save_file_path);
+                        }
+                    } else {
+                        self.serialization_status = format!("❌ Could not read {}", self.save_file_path);
+                    }
+                }
+            });
+            ui.label(egui::RichText::new(&self.serialization_status).color(egui::Color32::LIGHT_BLUE));
+            egui::ScrollArea::vertical().max_height(80.0).show(ui, |ui| {
+                ui.add(egui::TextEdit::multiline(&mut self.serialization_buffer).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+            });
+        });
+    }
+
+    fn render_central_viewport(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label(format!(
-                "Scene: {} | {} view | Real hash display, no mocks",
-                self.scene.as_str(),
-                if self.scene.is_3d() { "3D" } else { "2D" }
-            ));
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "Active Scene: {} | Mode: {} | Tool: {}",
+                    self.scene.as_str(),
+                    if self.scene.is_3d() {
+                        "3D Space"
+                    } else {
+                        "2D Plane"
+                    },
+                    self.active_tool.as_str()
+                ));
+            });
             let available = ui.available_size();
-            let (rect, _) = ui.allocate_exact_size(available, egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
             let painter = ui.painter_at(rect);
-            painter.rect_filled(rect, 8.0, egui::Color32::from_rgb(20, 20, 26));
+            painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(20, 20, 26));
 
-            // Draw world
+            if self.debug.grid {
+                self.draw_viewport_grid(&painter, rect);
+            }
+
             match &self.world {
                 ActiveWorld::World2(w) => {
-                    let scale = 30.0;
-                    let off_x = rect.center().x;
-                    let off_y = rect.center().y + 100.0;
-                    // ground line
-                    painter.line_segment(
-                        [
-                            egui::pos2(rect.left(), off_y),
-                            egui::pos2(rect.right(), off_y),
-                        ],
-                        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(50, 50, 60)),
-                    );
+                    let scale = self.viewport_scale;
+                    let off_x = rect.center().x + self.viewport_offset.x;
+                    let off_y = rect.center().y + self.viewport_offset.y;
                     for (_, b) in w.bodies_iter() {
                         let screen_x = off_x + b.position.x * scale;
                         let screen_y = off_y - b.position.y * scale;
@@ -1219,7 +2066,6 @@ impl eframe::App for SandboxApp {
                                 }
                             }
                         };
-                        // draw first collider as circle/box approx
                         let r = b
                             .colliders
                             .first()
@@ -1262,7 +2108,7 @@ impl eframe::App for SandboxApp {
                             painter.circle_stroke(
                                 egui::pos2(screen_x, screen_y),
                                 r.max(4.0) + 4.0,
-                                egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
+                                egui::Stroke::new(2.5_f32, egui::Color32::YELLOW),
                             );
                         }
                     }
@@ -1289,13 +2135,18 @@ impl eframe::App for SandboxApp {
                     }
                 }
                 ActiveWorld::World3(w) => {
-                    let scale = 18.0;
-                    let off_x = rect.center().x;
-                    let off_y = rect.center().y;
+                    let scale = self.viewport_scale * (25.0 / self.camera_dist.max(1.0)) * 0.6;
+                    let off_x = rect.center().x + self.viewport_offset.x;
+                    let off_y = rect.center().y + self.viewport_offset.y;
+                    let cos_y = self.camera_yaw.cos();
+                    let sin_y = self.camera_yaw.sin();
+                    let cos_p = self.camera_pitch.cos();
+                    let sin_p = self.camera_pitch.sin();
                     let project = |p: Vec3| -> egui::Pos2 {
-                        let sx = off_x + (p.x - p.z * 0.4) * scale;
-                        let sy = off_y - (p.y - p.z * 0.2) * scale;
-                        egui::pos2(sx, sy)
+                        let rx = p.x * cos_y - p.z * sin_y;
+                        let rz = p.x * sin_y + p.z * cos_y;
+                        let ry = p.y * cos_p - rz * sin_p;
+                        egui::pos2(off_x + rx * scale, off_y - ry * scale)
                     };
                     for (_, b) in w.bodies_iter() {
                         let pos = project(b.position);
@@ -1326,16 +2177,15 @@ impl eframe::App for SandboxApp {
                             painter.circle_stroke(
                                 pos,
                                 r + 4.0,
-                                egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
+                                egui::Stroke::new(2.5_f32, egui::Color32::YELLOW),
                             );
                         }
                     }
                 }
                 ActiveWorld::SoftBody(sb) => {
-                    let scale = 22.0;
-                    let off_x = rect.center().x;
-                    let off_y = rect.center().y;
-                    // draw particles
+                    let scale = self.viewport_scale * 0.7;
+                    let off_x = rect.center().x + self.viewport_offset.x;
+                    let off_y = rect.center().y + self.viewport_offset.y;
                     for p in &sb.particles {
                         let sx = off_x + p.position.x * scale;
                         let sy = off_y - p.position.y * scale;
@@ -1345,9 +2195,8 @@ impl eframe::App for SandboxApp {
                             egui::Color32::from_rgb(255, 136, 68),
                         );
                     }
-                    // draw constraints as lines (first few)
                     if self.debug.softbody {
-                        for (a_idx, b_idx) in sb.edge_indices.iter().take(300) {
+                        for (a_idx, b_idx) in sb.edge_indices.iter().take(400) {
                             if let (Some(pa), Some(pb)) =
                                 (sb.particles.get(*a_idx), sb.particles.get(*b_idx))
                             {
@@ -1371,12 +2220,10 @@ impl eframe::App for SandboxApp {
                     }
                 }
                 ActiveWorld::Mixed => {
-                    ui.label("Particles / Fluid scene — engine-driven storage, real counts");
                     if let Some(storage) = &self.particle_storage {
-                        ui.label(format!("Alive: {}", storage.alive_count()));
-                        let scale = 16.0;
-                        let off_x = rect.center().x;
-                        let off_y = rect.center().y + 50.0;
+                        let scale = self.viewport_scale * 0.6;
+                        let off_x = rect.center().x + self.viewport_offset.x;
+                        let off_y = rect.center().y + self.viewport_offset.y;
                         for (i, alive) in storage.alive.iter().enumerate() {
                             if !alive {
                                 continue;
@@ -1394,51 +2241,497 @@ impl eframe::App for SandboxApp {
                 }
             }
 
-            // Click to select body (simple nearest)
-            if ui.input(|i| i.pointer.primary_clicked())
-                && let Some(click_pos) = ctx.input(|i| i.pointer.interact_pos())
-                && rect.contains(click_pos)
+            self.draw_viewport_gizmos(&painter, rect, ctx);
+            self.handle_viewport_interactions(&response, rect, ctx);
+        });
+    }
+
+    fn draw_viewport_grid(&self, painter: &egui::Painter, rect: egui::Rect) {
+        let off_x = rect.center().x + self.viewport_offset.x;
+        let off_y = rect.center().y + self.viewport_offset.y;
+        painter.line_segment(
+            [
+                egui::pos2(rect.left(), off_y),
+                egui::pos2(rect.right(), off_y),
+            ],
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 60, 75)),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(off_x, rect.top()),
+                egui::pos2(off_x, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 60, 75)),
+        );
+    }
+
+    fn draw_viewport_gizmos(&self, painter: &egui::Painter, rect: egui::Rect, ctx: &egui::Context) {
+        if let Some(hover_pos) = ctx.input(|i| i.pointer.hover_pos()) {
+            if !rect.contains(hover_pos) {
+                return;
+            }
+            if self.active_tool == EditorTool::SpawnBody {
+                let r = self.spawn_radius * self.viewport_scale;
+                painter.circle_stroke(
+                    hover_pos,
+                    r.max(6.0),
+                    egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(100, 255, 180)),
+                );
+            } else if self.active_tool == EditorTool::CreateJoint
+                && self.joint_wizard_step == 1
+                && let Some(id_a) = self.joint_wizard_body_a
             {
-                // find nearest body
-                let mut nearest: Option<(u64, f32)> = None;
-                match &self.world {
-                    ActiveWorld::World2(w) => {
-                        let scale = 30.0;
-                        let off_x = rect.center().x;
-                        let off_y = rect.center().y + 100.0;
+                let off_x = rect.center().x + self.viewport_offset.x;
+                let off_y = rect.center().y + self.viewport_offset.y;
+                let scale = self.viewport_scale;
+                if let ActiveWorld::World2(w) = &self.world
+                    && let Some((_, b)) = w.bodies_iter().find(|(_, b)| b.id.0 == id_a)
+                {
+                    let a_pos =
+                        egui::pos2(off_x + b.position.x * scale, off_y - b.position.y * scale);
+                    painter.line_segment(
+                        [a_pos, hover_pos],
+                        egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
+                    );
+                } else if let ActiveWorld::World3(w) = &self.world
+                    && let Some((_, b)) = w.bodies_iter().find(|(_, b)| b.id.0 == id_a)
+                {
+                    let cos_y = self.camera_yaw.cos();
+                    let sin_y = self.camera_yaw.sin();
+                    let cos_p = self.camera_pitch.cos();
+                    let sin_p = self.camera_pitch.sin();
+                    let rx = b.position.x * cos_y - b.position.z * sin_y;
+                    let rz = b.position.x * sin_y + b.position.z * cos_y;
+                    let ry = b.position.y * cos_p - rz * sin_p;
+                    let a_pos = egui::pos2(off_x + rx * scale * 0.6, off_y - ry * scale * 0.6);
+                    painter.line_segment(
+                        [a_pos, hover_pos],
+                        egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
+                    );
+                }
+            }
+        }
+        if self.active_tool == EditorTool::ApplyImpulse
+            && let (Some(_), Some(start), Some(end)) =
+                (self.drag_body, self.drag_start_pos, self.drag_current_pos)
+        {
+            painter.line_segment(
+                [start, end],
+                egui::Stroke::new(3.0_f32, egui::Color32::from_rgb(255, 120, 40)),
+            );
+            painter.circle_filled(end, 5.0, egui::Color32::from_rgb(255, 120, 40));
+        }
+    }
+
+    fn handle_viewport_interactions(
+        &mut self,
+        response: &egui::Response,
+        rect: egui::Rect,
+        ctx: &egui::Context,
+    ) {
+        if response.dragged_by(egui::PointerButton::Middle)
+            || (response.dragged_by(egui::PointerButton::Primary) && ctx.input(|i| i.modifiers.alt))
+        {
+            let delta = response.drag_delta();
+            if self.scene.is_3d() && ctx.input(|i| i.modifiers.alt) {
+                self.camera_yaw += delta.x * 0.01;
+                self.camera_pitch = (self.camera_pitch + delta.y * 0.01).clamp(-1.5, 1.5);
+            } else {
+                self.viewport_offset += Vec2 {
+                    x: delta.x,
+                    y: delta.y,
+                };
+            }
+        }
+
+        if response.hovered() {
+            let scroll = ctx.input(|i| i.raw_scroll_delta.y);
+            if scroll.abs() > 0.1 {
+                self.viewport_scale = (self.viewport_scale + scroll * 0.1).clamp(5.0, 200.0);
+            }
+        }
+
+        if response.clicked()
+            && let Some(click_pos) = response.interact_pointer_pos()
+        {
+            let off_x = rect.center().x + self.viewport_offset.x;
+            let off_y = rect.center().y + self.viewport_offset.y;
+            let scale = self.viewport_scale;
+
+            match self.active_tool {
+                EditorTool::Select => {
+                    let mut nearest: Option<(u64, f32)> = None;
+                    if let ActiveWorld::World2(w) = &self.world {
                         for (_, b) in w.bodies_iter() {
                             let sx = off_x + b.position.x * scale;
                             let sy = off_y - b.position.y * scale;
                             let d =
                                 ((click_pos.x - sx).powi(2) + (click_pos.y - sy).powi(2)).sqrt();
-                            if d < 20.0 && (nearest.is_none() || d < nearest.unwrap().1) {
+                            if d < 25.0 && nearest.is_none_or(|(_, best_d)| d < best_d) {
                                 nearest = Some((b.id.0, d));
                             }
                         }
-                    }
-                    ActiveWorld::World3(w) => {
-                        let scale = 18.0;
-                        let off_x = rect.center().x;
-                        let off_y = rect.center().y;
+                    } else if let ActiveWorld::World3(w) = &self.world {
+                        let scale3 = scale * (25.0 / self.camera_dist.max(1.0)) * 0.6;
+                        let cos_y = self.camera_yaw.cos();
+                        let sin_y = self.camera_yaw.sin();
+                        let cos_p = self.camera_pitch.cos();
+                        let sin_p = self.camera_pitch.sin();
                         for (_, b) in w.bodies_iter() {
-                            let sx = off_x + (b.position.x - b.position.z * 0.4) * scale;
-                            let sy = off_y - (b.position.y - b.position.z * 0.2) * scale;
+                            let rx = b.position.x * cos_y - b.position.z * sin_y;
+                            let rz = b.position.x * sin_y + b.position.z * cos_y;
+                            let ry = b.position.y * cos_p - rz * sin_p;
+                            let sx = off_x + rx * scale3;
+                            let sy = off_y - ry * scale3;
                             let d =
                                 ((click_pos.x - sx).powi(2) + (click_pos.y - sy).powi(2)).sqrt();
-                            if d < 20.0 && (nearest.is_none() || d < nearest.unwrap().1) {
+                            if d < 25.0 && nearest.is_none_or(|(_, best_d)| d < best_d) {
                                 nearest = Some((b.id.0, d));
                             }
                         }
                     }
-                    _ => {}
+                    if let Some((id, _)) = nearest {
+                        self.selected_body = Some(id);
+                        self.load_body_to_editor_fields(id);
+                    } else {
+                        self.selected_body = None;
+                    }
                 }
-                if let Some((id, _)) = nearest {
-                    self.selected_body = Some(id);
+                EditorTool::SpawnBody => {
+                    let wx = (click_pos.x - off_x) / scale;
+                    let wy = (off_y - click_pos.y) / scale;
+                    let kind = match self.spawn_body_type {
+                        1 => BodyType::Static,
+                        2 => BodyType::Kinematic,
+                        _ => BodyType::Dynamic,
+                    };
+                    let mat = Material {
+                        friction: self.spawn_friction as Real,
+                        restitution: self.spawn_restitution as Real,
+                        density: 1.0,
+                    };
+                    let mut spawned_body_to_load = None;
+                    if let ActiveWorld::World2(w) = &mut self.world {
+                        let shape = match self.spawn_shape {
+                            0 => {
+                                Circle2::new(self.spawn_radius as Real).map(ColliderShape2::Circle)
+                            }
+                            1 => Box2::new(Vec2 {
+                                x: self.spawn_half_width as Real,
+                                y: self.spawn_half_height as Real,
+                            })
+                            .map(ColliderShape2::Box),
+                            _ => Capsule2::new(
+                                self.spawn_radius as Real,
+                                self.spawn_half_height as Real,
+                            )
+                            .map(ColliderShape2::Capsule),
+                        };
+                        if let Ok(sh) = shape {
+                            let builder = BodyBuilder2 {
+                                kind,
+                                position: Vec2 {
+                                    x: wx as Real,
+                                    y: wy as Real,
+                                },
+                                rotation: Rot2::from_radians(0.0).unwrap(),
+                                velocity: Vec2 {
+                                    x: self.spawn_vel_x as Real,
+                                    y: self.spawn_vel_y as Real,
+                                },
+                                angular_velocity: 0.0,
+                                mass: if kind == BodyType::Dynamic {
+                                    self.spawn_mass as Real
+                                } else {
+                                    0.0
+                                },
+                                inertia: None,
+                                colliders: vec![Collider2 {
+                                    shape: sh,
+                                    offset: Vec2::ZERO,
+                                    material: mat,
+                                    filter: CollisionFilter::default(),
+                                }],
+                                restitution: self.spawn_restitution as Real,
+                                friction: self.spawn_friction as Real,
+                                linear_damping: self.spawn_lin_damp as Real,
+                                angular_damping: self.spawn_ang_damp as Real,
+                                user_data: 0,
+                            };
+                            if let Ok(h) = w.add_body(builder)
+                                && let Ok(b) = w.body(h)
+                            {
+                                spawned_body_to_load = Some(b.id.0);
+                            }
+                        }
+                    } else if let ActiveWorld::World3(w) = &mut self.world {
+                        let shape = match self.spawn_shape {
+                            0 => {
+                                Sphere3::new(self.spawn_radius as Real).map(ColliderShape3::Sphere)
+                            }
+                            1 => Box3::new(Vec3 {
+                                x: self.spawn_half_width as Real,
+                                y: self.spawn_half_height as Real,
+                                z: self.spawn_half_depth as Real,
+                            })
+                            .map(ColliderShape3::Box),
+                            _ => Capsule3::new(
+                                self.spawn_radius as Real,
+                                self.spawn_half_height as Real,
+                            )
+                            .map(ColliderShape3::Capsule),
+                        };
+                        if let Ok(sh) = shape {
+                            let builder = BodyBuilder3 {
+                                kind,
+                                position: Vec3 {
+                                    x: wx as Real,
+                                    y: wy as Real,
+                                    z: 0.0,
+                                },
+                                rotation: Quat::identity(),
+                                velocity: Vec3 {
+                                    x: self.spawn_vel_x as Real,
+                                    y: self.spawn_vel_y as Real,
+                                    z: self.spawn_vel_z as Real,
+                                },
+                                angular_velocity: Vec3::ZERO,
+                                mass: if kind == BodyType::Dynamic {
+                                    self.spawn_mass as Real
+                                } else {
+                                    0.0
+                                },
+                                inertia_diagonal: None,
+                                colliders: vec![Collider3 {
+                                    shape: sh,
+                                    offset: Vec3::ZERO,
+                                    material: mat,
+                                    filter: CollisionFilter::default(),
+                                }],
+                                restitution: self.spawn_restitution as Real,
+                                friction: self.spawn_friction as Real,
+                                linear_damping: self.spawn_lin_damp as Real,
+                                angular_damping: self.spawn_ang_damp as Real,
+                                user_data: 0,
+                            };
+                            if let Ok(h) = w.add_body(builder)
+                                && let Ok(b) = w.body(h)
+                            {
+                                spawned_body_to_load = Some(b.id.0);
+                            }
+                        }
+                    }
+                    if let Some(id) = spawned_body_to_load {
+                        self.selected_body = Some(id);
+                        self.load_body_to_editor_fields(id);
+                    }
+                    self.update_hash();
                 }
+                EditorTool::CreateJoint => {
+                    let mut clicked_id = None;
+                    if let ActiveWorld::World2(w) = &self.world {
+                        for (_, b) in w.bodies_iter() {
+                            let sx = off_x + b.position.x * scale;
+                            let sy = off_y - b.position.y * scale;
+                            if ((click_pos.x - sx).powi(2) + (click_pos.y - sy).powi(2)).sqrt()
+                                < 25.0
+                            {
+                                clicked_id = Some(b.id.0);
+                                break;
+                            }
+                        }
+                    } else if let ActiveWorld::World3(w) = &self.world {
+                        let scale3 = scale * (25.0 / self.camera_dist.max(1.0)) * 0.6;
+                        let cos_y = self.camera_yaw.cos();
+                        let sin_y = self.camera_yaw.sin();
+                        let cos_p = self.camera_pitch.cos();
+                        let sin_p = self.camera_pitch.sin();
+                        for (_, b) in w.bodies_iter() {
+                            let rx = b.position.x * cos_y - b.position.z * sin_y;
+                            let rz = b.position.x * sin_y + b.position.z * cos_y;
+                            let ry = b.position.y * cos_p - rz * sin_p;
+                            let sx = off_x + rx * scale3;
+                            let sy = off_y - ry * scale3;
+                            if ((click_pos.x - sx).powi(2) + (click_pos.y - sy).powi(2)).sqrt()
+                                < 25.0
+                            {
+                                clicked_id = Some(b.id.0);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(id) = clicked_id {
+                        if self.joint_wizard_step == 0 {
+                            self.joint_wizard_body_a = Some(id);
+                            self.joint_wizard_step = 1;
+                        } else if Some(id) != self.joint_wizard_body_a {
+                            self.joint_wizard_body_b = Some(id);
+                        }
+                    }
+                }
+                EditorTool::Delete => {
+                    let mut target_id = None;
+                    if let ActiveWorld::World2(w) = &self.world {
+                        for (_, b) in w.bodies_iter() {
+                            let sx = off_x + b.position.x * scale;
+                            let sy = off_y - b.position.y * scale;
+                            if ((click_pos.x - sx).powi(2) + (click_pos.y - sy).powi(2)).sqrt()
+                                < 25.0
+                            {
+                                target_id = Some(b.id.0);
+                                break;
+                            }
+                        }
+                    } else if let ActiveWorld::World3(w) = &self.world {
+                        let scale3 = scale * (25.0 / self.camera_dist.max(1.0)) * 0.6;
+                        let cos_y = self.camera_yaw.cos();
+                        let sin_y = self.camera_yaw.sin();
+                        let cos_p = self.camera_pitch.cos();
+                        let sin_p = self.camera_pitch.sin();
+                        for (_, b) in w.bodies_iter() {
+                            let rx = b.position.x * cos_y - b.position.z * sin_y;
+                            let rz = b.position.x * sin_y + b.position.z * cos_y;
+                            let ry = b.position.y * cos_p - rz * sin_p;
+                            let sx = off_x + rx * scale3;
+                            let sy = off_y - ry * scale3;
+                            if ((click_pos.x - sx).powi(2) + (click_pos.y - sy).powi(2)).sqrt()
+                                < 25.0
+                            {
+                                target_id = Some(b.id.0);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(id) = target_id {
+                        let handle2 = if let ActiveWorld::World2(w) = &self.world {
+                            w.bodies_iter().find(|(_, b)| b.id.0 == id).map(|(h, _)| h)
+                        } else {
+                            None
+                        };
+                        let handle3 = if let ActiveWorld::World3(w) = &self.world {
+                            w.bodies_iter().find(|(_, b)| b.id.0 == id).map(|(h, _)| h)
+                        } else {
+                            None
+                        };
+                        if let Some(h) = handle2
+                            && let ActiveWorld::World2(w) = &mut self.world
+                        {
+                            let _ = w.remove_body(h);
+                        } else if let Some(h) = handle3
+                            && let ActiveWorld::World3(w) = &mut self.world
+                        {
+                            let _ = w.remove_body(h);
+                        }
+                        if self.selected_body == Some(id) {
+                            self.selected_body = None;
+                        }
+                        self.update_hash();
+                    }
+                }
+                _ => {}
             }
-        });
+        }
 
-        // Request repaint for continuous simulation
+        if self.active_tool == EditorTool::ApplyImpulse {
+            if response.drag_started()
+                && let Some(start_pos) = response.interact_pointer_pos()
+            {
+                let off_x = rect.center().x + self.viewport_offset.x;
+                let off_y = rect.center().y + self.viewport_offset.y;
+                let scale = self.viewport_scale;
+                let mut found = None;
+                if let ActiveWorld::World2(w) = &self.world {
+                    for (_, b) in w.bodies_iter() {
+                        let sx = off_x + b.position.x * scale;
+                        let sy = off_y - b.position.y * scale;
+                        if ((start_pos.x - sx).powi(2) + (start_pos.y - sy).powi(2)).sqrt() < 30.0 {
+                            found = Some((b.id.0, egui::pos2(sx, sy)));
+                            break;
+                        }
+                    }
+                } else if let ActiveWorld::World3(w) = &self.world {
+                    let scale3 = scale * (25.0 / self.camera_dist.max(1.0)) * 0.6;
+                    let cos_y = self.camera_yaw.cos();
+                    let sin_y = self.camera_yaw.sin();
+                    let cos_p = self.camera_pitch.cos();
+                    let sin_p = self.camera_pitch.sin();
+                    for (_, b) in w.bodies_iter() {
+                        let rx = b.position.x * cos_y - b.position.z * sin_y;
+                        let rz = b.position.x * sin_y + b.position.z * cos_y;
+                        let ry = b.position.y * cos_p - rz * sin_p;
+                        let sx = off_x + rx * scale3;
+                        let sy = off_y - ry * scale3;
+                        if ((start_pos.x - sx).powi(2) + (start_pos.y - sy).powi(2)).sqrt() < 30.0 {
+                            found = Some((b.id.0, egui::pos2(sx, sy)));
+                            break;
+                        }
+                    }
+                }
+                if let Some((id, center)) = found {
+                    self.drag_body = Some(id);
+                    self.drag_start_pos = Some(center);
+                    self.drag_current_pos = Some(start_pos);
+                }
+            } else if response.dragged()
+                && self.drag_body.is_some()
+                && let Some(curr) = response.interact_pointer_pos()
+            {
+                self.drag_current_pos = Some(curr);
+            } else if response.drag_stopped()
+                && let (Some(id), Some(start), Some(end)) =
+                    (self.drag_body, self.drag_start_pos, self.drag_current_pos)
+            {
+                let dx = (end.x - start.x) / self.viewport_scale * self.impulse_multiplier;
+                let dy = (start.y - end.y) / self.viewport_scale * self.impulse_multiplier;
+                let handle2 = if let ActiveWorld::World2(w) = &self.world {
+                    w.bodies_iter().find(|(_, b)| b.id.0 == id).map(|(h, _)| h)
+                } else {
+                    None
+                };
+                let handle3 = if let ActiveWorld::World3(w) = &self.world {
+                    w.bodies_iter().find(|(_, b)| b.id.0 == id).map(|(h, _)| h)
+                } else {
+                    None
+                };
+                if let Some(h) = handle2
+                    && let ActiveWorld::World2(w) = &mut self.world
+                {
+                    let _ = w.apply_impulse(
+                        h,
+                        Vec2 {
+                            x: dx as Real,
+                            y: dy as Real,
+                        },
+                    );
+                } else if let Some(h) = handle3
+                    && let ActiveWorld::World3(w) = &mut self.world
+                {
+                    let _ = w.apply_impulse(
+                        h,
+                        Vec3 {
+                            x: dx as Real,
+                            y: dy as Real,
+                            z: 0.0,
+                        },
+                    );
+                }
+                self.drag_body = None;
+                self.drag_start_pos = None;
+                self.drag_current_pos = None;
+                self.update_hash();
+            }
+        }
+    }
+}
+
+impl eframe::App for SandboxApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.render_top_bar(ctx);
+        self.render_left_side_panel(ctx);
+        self.render_right_side_panel(ctx);
+        self.render_bottom_serialization_panel(ctx);
+        self.render_central_viewport(ctx);
+
         if !self.paused {
             ctx.request_repaint();
             self.step();

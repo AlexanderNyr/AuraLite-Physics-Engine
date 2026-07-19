@@ -460,6 +460,29 @@ pub struct JointConfig3 {
     pub user_data: u64,
 }
 
+impl JointConfig3 {
+    /// Creates a new 3D joint config.
+    pub fn new(
+        joint_type: JointType3,
+        body_a: crate::BodyHandle3,
+        body_b: crate::BodyHandle3,
+        anchor_a: Vec3,
+        anchor_b: Vec3,
+    ) -> Self {
+        Self {
+            joint_type,
+            body_a,
+            body_b,
+            anchor_a,
+            anchor_b,
+            limits: JointLimits::default(),
+            motor: JointMotor::default(),
+            break_impulse: 0.0,
+            user_data: 0,
+        }
+    }
+}
+
 /// 3D joint type — includes cone-twist or equivalent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JointType3 {

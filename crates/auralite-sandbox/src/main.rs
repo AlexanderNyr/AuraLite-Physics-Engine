@@ -37,7 +37,7 @@ fn main() {
                 ..Default::default()
             };
             let _ = eframe::run_native(
-                "AuraLite Physics Engine — Interactive Sandbox Studio (Real Engine)",
+                "AuraLite Physics Engine — Interactive Sandbox & Scene Editor Studio (Real Engine)",
                 options,
                 Box::new(|cc| Ok(Box::new(interactive::SandboxApp::new(cc)))),
             );

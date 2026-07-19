@@ -1543,6 +1543,10 @@ impl World2 {
     pub fn joint(&self, id: JointId) -> Option<&Joint2> {
         self.joints.iter().find(|j| j.id == id)
     }
+    /// remove_joint — performs remove joint operation.
+    pub fn remove_joint(&mut self, id: JointId) {
+        self.joints.retain(|j| j.id != id);
+    }
     /// remove_body — performs remove body operation.
     pub fn remove_body(&mut self, h: BodyHandle2) -> Result<Body2, WorldError> {
         self.bodies.remove(h).ok_or(WorldError::StaleHandle)
@@ -2026,6 +2030,10 @@ impl World3 {
     /// body — performs body operation.
     pub fn body(&self, h: BodyHandle3) -> Result<&Body3, WorldError> {
         self.bodies.get(h).ok_or(WorldError::StaleHandle)
+    }
+    /// body_mut — performs body mut operation.
+    pub fn body_mut(&mut self, h: BodyHandle3) -> Result<&mut Body3, WorldError> {
+        self.bodies.get_mut(h).ok_or(WorldError::StaleHandle)
     }
     /// body_handles — performs body handles operation.
     pub fn body_handles(&self) -> Vec<BodyHandle3> {
