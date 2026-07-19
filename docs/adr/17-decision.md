@@ -95,3 +95,14 @@ Core must stay zero-dep (ADR-16); sandbox may have justified deps with license a
 - `deny.toml` — license allow list
 - `docs/dependencies.md` — justification + license audit
 - `docs/generated/scenes.html` — contains "RECORDED REPLAY — NOT LIVE SIMULATION" and real hashes
+
+## Addendum (2026-07-19 — CI lint-truth pass)
+
+Surfaced when the blanket `#![allow(clippy::all, ...)]` suppressions were removed from the sandbox (they had hidden 70 lints incl. dead code):
+
+- **Record/Replay implemented for real** (was `recorded_frames` placeholder field): `SandboxApp::start_recording()` captures an engine snapshot (`World2/3::snapshot()` or soft-body clone); every stepped frame appends its real `state_hash()` to `recorded_hashes` (bounded by `MAX_RECORD_FRAMES = 100_000`); **Replay & verify** restores the start snapshot and re-steps, comparing each frame's hash to the trace and displaying a divergence report (frame index + both hashes) on mismatch. Particle-only scenes are honestly excluded (no engine snapshot API); the UI says so instead of implying support.
+- **`SvgVisualizer` now genuinely exercised**: headless `generate_visual_report()` renders `docs/generated/snapshot-2d.svg` + `snapshot-3d.svg` from real stepped worlds every run (previously the struct was never constructed). `generate_interactive_sandbox_app()` (H1-era stub emitting `{"scenes":[]}`) was deleted.
+- **`SceneReplay::name()/frame_count()` now used** for per-scene frame logging in the headless run output.
+- **World enum payloads boxed** (`ActiveWorld::World2(Box<World2>)` etc.) — resolves `clippy::large_enum_variant` (World2 = 456 B inline) without suppression.
+- **`ActiveWorld::Particles` dead variant removed**; `show_inspection`/`show_settings` are real top-bar toggles gating those panels.
+- **Dependency audit disposition**: `quick-xml 0.39.4` advisories RUSTSEC-2026-0194/0195 remain unfixable within the pinned `eframe 0.32.x`/`winit 0.30.x` stack (latest wayland-scanner 0.31.10 pins quick-xml "0.39"); build-time-only, trusted-XML justification + review-by 2027-01-19 recorded in `deny.toml` and `docs/dependencies.md`. Any future egui/eframe major upgrade must revisit this addendum.

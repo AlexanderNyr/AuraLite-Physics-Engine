@@ -3,10 +3,12 @@
 ## Development Setup
 
 - Pinned toolchain `1.97.0` via `rust-toolchain.toml` (minimal profile, components rustfmt, clippy)
+- **Pre-push gate (mandatory): `scripts/ci-local.sh`** — runs the exact CI command list locally (fmt, strict clippy `--all-targets --all-features`, tests, doctests, f64, single-thread, release, sandbox scenes, fuzz-smoke, bench compile, C example, interactive build, aarch64 check, `cargo deny check`). Added 2026-07-19 after a red CI run escaped local gating; do not push with a failing step.
 - `cargo fmt --all`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace --all-features`, `cargo test --doc --workspace`, `cargo run -p auralite-sandbox --release`, `cargo bench -p auralite-core`, `cargo check --target aarch64-unknown-linux-gnu --all-features`
 - C FFI: `gcc crates/auralite-ffi/c_example/main.c target/release/libauralite_ffi.a -lpthread -ldl -lm -o /tmp/c_verify && /tmp/c_verify`
 - Fuzz: `cargo run -p auralite-fuzz --release`
 - Interactive sandbox: `cargo run -p auralite-sandbox --release --features interactive -- --interactive` (requires DISPLAY)
+- Dependency audit: pinned `cargo install cargo-deny --version 0.20.2 --locked`, then `cargo deny check` (root covers the full workspace feature graph incl. sandbox `interactive` via `[graph] all-features = true`; `--all-features` is not a valid `check` flag on pinned cargo-deny).
 
 ## Code Style
 

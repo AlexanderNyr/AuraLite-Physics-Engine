@@ -2,7 +2,6 @@
 //! - SvgVisualizer renders real World2/World3 state (engine-driven)
 //! - generate_recorded_replay_viewer produces watermarked HTML that plays back ENGINE-RECORDED trajectories + real hashes (H1 fix)
 #![forbid(unsafe_code)]
-#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 
 use auralite_dynamics::{BodyType, World2, World3};
 use auralite_math::{Vec2, Vec3};
@@ -152,7 +151,7 @@ impl SvgVisualizer {
             let sy = self.offset.y - (p.y - p.z * 0.2) * self.scale;
             (sx, sy)
         };
-        for (h, b) in world.bodies_iter() {
+        for (_, b) in world.bodies_iter() {
             let color = match b.kind {
                 BodyType::Static => "#555555",
                 BodyType::Kinematic => "#44aa99",
@@ -256,7 +255,6 @@ impl SvgVisualizer {
                     }
                 }
             }
-            let _ = h;
         }
         svg.push_str("</svg>");
         svg
@@ -265,7 +263,7 @@ impl SvgVisualizer {
 
 fn rot2_to_degrees(r: auralite_math::Rot2) -> f32 {
     let v = r.rotate(Vec2::X);
-    (v.y.atan2(v.x) * 180.0 / core::f64::consts::PI as f32) as f32
+    v.y.atan2(v.x) * 180.0 / core::f64::consts::PI as f32
 }
 
 pub fn generate_recorded_replay_viewer(replays_json: &str) -> String {
@@ -528,9 +526,4 @@ requestAnimationFrame(loop);
 "##,
         json_data = replays_json
     )
-}
-
-pub fn generate_interactive_sandbox_app() -> String {
-    let placeholder = r#"{"scenes":[]}"#;
-    generate_recorded_replay_viewer(placeholder)
 }

@@ -1,4 +1,3 @@
-#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 //! AuraLite Physics Engine — Sandbox
 //! - Headless mode (default): runs 16 demo scene checks + generates engine-recorded replay viewer (watermarked, real hashes)
 //! - Interactive mode (--interactive, requires feature "interactive"): launches desktop windowed app with real engine stepping, no mocks.
@@ -103,6 +102,13 @@ fn main() {
 fn generate_visual_report() {
     // Generate real replays from engine
     let replays = generate_all_replays();
+    for scene in &replays {
+        println!(
+            "  recorded '{}' — {} frames (engine-captured)",
+            scene.name(),
+            scene.frame_count()
+        );
+    }
     let json = build_replays_json(&replays);
     let html = visualizer::generate_recorded_replay_viewer(&json);
     std::fs::create_dir_all("docs/generated").ok();
@@ -110,29 +116,94 @@ fn generate_visual_report() {
         let _ = f.write_all(html.as_bytes());
     }
     // Do not generate root scenes.html — single output path per H1
+
+    // Real engine-state SVG snapshots via SvgVisualizer (exercises the SVG
+    // path on live worlds — previously never constructed, surfaced by the
+    // CI lint-truth pass).
+    let viz = visualizer::SvgVisualizer::new();
+    let dt: Real = 1.0 / 60.0;
+
+    let mut w2 = World2::default();
+    w2.add_body(BodyBuilder2::static_body().add_collider(Collider2 {
+        shape: ColliderShape2::Box(auralite_geometry::Box2::new(Vec2 { x: 10.0, y: 0.5 }).unwrap()),
+        offset: Vec2::ZERO,
+        material: Material::default(),
+        filter: CollisionFilter::default(),
+    }))
+    .ok();
+    for i in 0..3 {
+        w2.add_body(
+            BodyBuilder2::dynamic()
+                .position(Vec2 {
+                    x: 0.0,
+                    y: 1.0 + i as Real * 1.1,
+                })
+                .add_collider(Collider2 {
+                    shape: ColliderShape2::Box(
+                        auralite_geometry::Box2::new(Vec2 { x: 0.45, y: 0.45 }).unwrap(),
+                    ),
+                    offset: Vec2::ZERO,
+                    material: Material::default(),
+                    filter: CollisionFilter::default(),
+                }),
+        )
+        .ok();
+    }
+    for _ in 0..60 {
+        w2.step(dt).ok();
+    }
+    let svg2 = viz.render2d(&w2);
+    if let Ok(mut f) = File::create("docs/generated/snapshot-2d.svg") {
+        let _ = f.write_all(svg2.as_bytes());
+    }
+
+    let mut w3 = World3::default();
+    w3.add_body(
+        BodyBuilder3::dynamic()
+            .position(Vec3 {
+                x: 0.0,
+                y: 3.0,
+                z: 0.0,
+            })
+            .add_collider(Collider3 {
+                shape: ColliderShape3::Sphere(auralite_geometry::Sphere3::new(0.5).unwrap()),
+                offset: Vec3::ZERO,
+                material: Material::default(),
+                filter: CollisionFilter::default(),
+            }),
+    )
+    .ok();
+    for _ in 0..60 {
+        w3.step(dt).ok();
+    }
+    let svg3 = viz.render3d(&w3);
+    if let Ok(mut f) = File::create("docs/generated/snapshot-3d.svg") {
+        let _ = f.write_all(svg3.as_bytes());
+    }
+    println!("Done: docs/generated/snapshot-2d.svg + snapshot-3d.svg (real engine-state SVG)");
 }
 
 fn generate_all_replays() -> Vec<SceneReplay> {
     // We generate limited frames per scene to keep HTML size reasonable but real
-    let mut replays = Vec::new();
-    // Helper to record world2 scenes for ~180 frames (3s @60fps)
-    replays.push(record_scene_stacking());
-    replays.push(record_scene_ragdoll());
-    replays.push(record_scene_ccd());
-    replays.push(record_scene_triggers());
-    replays.push(record_scene_replay());
-    replays.push(record_scene_cloth());
-    replays.push(record_scene_self_collision());
-    replays.push(record_scene_particles());
-    replays.push(record_scene_fluid());
-    replays.push(record_scene_buoyancy());
-    replays.push(record_scene_fields());
-    replays.push(record_scene_vehicle3());
-    replays.push(record_scene_character2());
-    replays.push(record_scene_character3());
-    replays.push(record_scene_serialization());
-    replays.push(record_scene_stress());
-    replays
+    // (~180 frames per scene, 3s @60fps, engine-captured)
+    vec![
+        record_scene_stacking(),
+        record_scene_ragdoll(),
+        record_scene_ccd(),
+        record_scene_triggers(),
+        record_scene_replay(),
+        record_scene_cloth(),
+        record_scene_self_collision(),
+        record_scene_particles(),
+        record_scene_fluid(),
+        record_scene_buoyancy(),
+        record_scene_fields(),
+        record_scene_vehicle3(),
+        record_scene_character2(),
+        record_scene_character3(),
+        record_scene_serialization(),
+        record_scene_stress(),
+    ]
 }
 
 // --- Recording helpers ---
@@ -405,9 +476,9 @@ fn record_scene_cloth() -> SceneReplay {
         for (i, p) in cloth.particles.iter().enumerate() {
             bodies.push(replay::ReplayBody3 {
                 id: i as u64,
-                x: p.position.x as f32,
-                y: p.position.y as f32,
-                z: p.position.z as f32,
+                x: p.position.x,
+                y: p.position.y,
+                z: p.position.z,
                 sleeping: false,
                 kind: 2,
                 radius: 0.05,
@@ -474,9 +545,9 @@ fn record_scene_self_collision() -> SceneReplay {
         for (i, p) in cloth.particles.iter().enumerate() {
             bodies.push(replay::ReplayBody3 {
                 id: i as u64,
-                x: p.position.x as f32,
-                y: p.position.y as f32,
-                z: p.position.z as f32,
+                x: p.position.x,
+                y: p.position.y,
+                z: p.position.z,
                 sleeping: false,
                 kind: 2,
                 radius: 0.05,
@@ -523,9 +594,9 @@ fn record_scene_particles() -> SceneReplay {
             let pos = storage.positions[i];
             bodies.push(replay::ReplayBody3 {
                 id: i as u64,
-                x: pos.x as f32,
-                y: pos.y as f32,
-                z: pos.z as f32,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
                 sleeping: false,
                 kind: 2,
                 radius: 0.08,
@@ -581,9 +652,9 @@ fn record_scene_fluid() -> SceneReplay {
             let pos = storage.positions[i];
             bodies.push(replay::ReplayBody3 {
                 id: i as u64,
-                x: pos.x as f32,
-                y: pos.y as f32,
-                z: pos.z as f32,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
                 sleeping: false,
                 kind: 2,
                 radius: 0.1,
@@ -717,9 +788,9 @@ fn record_scene_fields() -> SceneReplay {
             let pos = storage.positions[i];
             bodies.push(replay::ReplayBody3 {
                 id: i as u64,
-                x: pos.x as f32,
-                y: pos.y as f32,
-                z: pos.z as f32,
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
                 sleeping: false,
                 kind: 2,
                 radius: 0.1,

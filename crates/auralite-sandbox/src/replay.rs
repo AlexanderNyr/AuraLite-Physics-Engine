@@ -1,4 +1,3 @@
-#![allow(clippy::all, dead_code, unused_variables, unused_imports, unused_mut)]
 //! Recorded replay structures — pure std, no external deps, engine-generated.
 //! Used to generate the watermarked HTML replay viewer (H1 fix).
 
@@ -94,16 +93,16 @@ pub fn record_world2(world: &World2) -> Vec<ReplayBody2> {
         let radius = b
             .colliders
             .first()
-            .map(|c| c.bounding_radius() as f32)
+            .map(|c| c.bounding_radius())
             .unwrap_or(0.5);
         let angle = {
             let v = b.rotation.rotate(Vec2::X);
-            v.y.atan2(v.x) as f32
+            v.y.atan2(v.x)
         };
         out.push(ReplayBody2 {
             id: b.id.0,
-            x: b.position.x as f32,
-            y: b.position.y as f32,
+            x: b.position.x,
+            y: b.position.y,
             angle,
             sleeping: b.sleeping,
             kind,
@@ -124,13 +123,13 @@ pub fn record_world3(world: &World3) -> Vec<ReplayBody3> {
         let radius = b
             .colliders
             .first()
-            .map(|c| c.bounding_radius() as f32)
+            .map(|c| c.bounding_radius())
             .unwrap_or(0.5);
         out.push(ReplayBody3 {
             id: b.id.0,
-            x: b.position.x as f32,
-            y: b.position.y as f32,
-            z: b.position.z as f32,
+            x: b.position.x,
+            y: b.position.y,
+            z: b.position.z,
             sleeping: b.sleeping,
             kind,
             radius,

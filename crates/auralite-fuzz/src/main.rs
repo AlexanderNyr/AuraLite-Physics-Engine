@@ -11,13 +11,6 @@ use auralite_geometry::{Box2, Box3, Circle2, Sphere3};
 use auralite_math::{Real, Vec2, Vec3};
 use auralite_serialize::{decode, encode, serialize_body2};
 
-fn next_f32(rng: &mut Rng) -> f32 {
-    (rng.next_u64() as f32) / (u64::MAX as f32)
-}
-fn next_f64(rng: &mut Rng) -> f64 {
-    (rng.next_u64() as f64) / (u64::MAX as f64)
-}
-
 fn main() {
     println!("=== AuraLite Fuzz Harness (Stable, Deterministic) ===");
     let seed = 0xC0FFEEu64;
@@ -58,7 +51,7 @@ fn main() {
             user_data: i,
         };
         // Occasionally add collider
-        if rng.next_u64() % 3 == 0 {
+        if rng.next_u64().is_multiple_of(3) {
             body.colliders.push(Collider2 {
                 shape: ColliderShape2::Circle(Circle2::new(0.5).unwrap()),
                 offset: Vec2::ZERO,
@@ -153,7 +146,7 @@ fn main() {
     for i in 0..100 {
         let mut w2 = World2::default();
         // Add random bodies
-        for j in 0..10 {
+        for _ in 0..10 {
             let x = ((rng.next_u64() as f32 / u64::MAX as f32) as Real - 0.5) * 10.0 as Real;
             let y = ((rng.next_u64() as f32 / u64::MAX as f32) as Real) * 10.0 as Real;
             let b = BodyBuilder2::dynamic()
@@ -190,7 +183,7 @@ fn main() {
 
     for i in 0..50 {
         let mut w3 = World3::default();
-        for j in 0..5 {
+        for _ in 0..5 {
             let x = ((rng.next_u64() as f32 / u64::MAX as f32) as Real - 0.5) * 5.0 as Real;
             let y = ((rng.next_u64() as f32 / u64::MAX as f32) as Real) * 5.0 as Real;
             let z = ((rng.next_u64() as f32 / u64::MAX as f32) as Real - 0.5) * 5.0 as Real;

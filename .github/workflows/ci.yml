@@ -6,6 +6,10 @@ jobs:
   verify:
     name: Verify (${{ matrix.os }})
     strategy:
+      # fail-fast disabled intentionally (decision kept after 2026-07-19 repair): every
+      # platform result must remain observable even if a sibling job fails — the red run
+      # 29583407674 cancelled windows/macos, hiding platform evidence. No hidden failures.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -80,9 +84,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.97.0
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
-      - name: Check Licenses, Bans, Advisories
-        run: cargo deny check --all-features
-      - name: Check Sandbox Licenses (Interactive Feature)
-        run: cargo deny check --all-features --manifest-path crates/auralite-sandbox/Cargo.toml
+      # Pinned: 0.20.2 --locked. An unpinned install pulled a schema-drifting cargo-deny
+      # that rejected deny.toml on 2026-07-17 (run 29583407674). deny.toml is written and
+      # validated against exactly this version.
+      - name: Install cargo-deny (pinned)
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      # Single root-level canonical invocation. `[graph] all-features = true` in deny.toml
+      # covers the whole workspace feature graph incl. the sandbox `interactive` feature
+      # (eframe/winit/wayland/quick-xml tree); `--all-features` / `--manifest-path` CLI
+      # flags were invalid on pinned check and duplicated this coverage.
+      - name: Check Licenses, Bans, Advisories, Sources
+        run: cargo deny check
